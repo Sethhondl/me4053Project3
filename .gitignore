@@ -1,0 +1,26 @@
+# Claude Code logs
+logs/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# Data files (uncomment if needed)
+# *.csv
+# *.dat
+# *.h5
