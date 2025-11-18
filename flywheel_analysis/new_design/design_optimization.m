@@ -18,10 +18,20 @@
 
 clear; clc; close all;
 
+% Get script directory and set up paths
+script_dir = fileparts(mfilename('fullpath'));
+project_dir = fileparts(script_dir);
+
 % Add paths
-addpath('../utilities');
-addpath('../ee_functions');
-addpath('../baseline_analysis');
+addpath(fullfile(project_dir, 'utilities'));
+addpath(fullfile(project_dir, 'ee_functions'));
+addpath(fullfile(project_dir, 'baseline_analysis'));
+
+% Create results directory if it doesn't exist
+results_dir = fullfile(project_dir, 'results');
+if ~exist(results_dir, 'dir')
+    mkdir(results_dir);
+end
 
 fprintf('=== NEW FLYWHEEL DESIGN OPTIMIZATION ===\n\n');
 
@@ -171,8 +181,8 @@ legend('Infeasible', 'Feasible', 'Location', 'best');
 grid on;
 view(45, 30);
 
-saveas(gcf, '../results/design_tradeoffs_3d.fig');
-saveas(gcf, '../results/design_tradeoffs_3d.png');
+saveas(gcf, fullfile(results_dir, 'design_tradeoffs_3d.fig'));
+saveas(gcf, fullfile(results_dir, 'design_tradeoffs_3d.png'));
 
 %% Select optimal design
 % Selection criteria: maximize weighted combination of objectives
@@ -204,8 +214,8 @@ fprintf('  Max temperature: %.1f°C\n', optimal_design.max_temp);
 fprintf('  Total mass: %.1f kg\n', optimal_design.mass);
 
 %% Save results
-save('../results/design_optimization_results.mat', 'design_results', ...
+save(fullfile(results_dir, 'design_optimization_results.mat'), 'design_results', ...
      'optimal_design', 't_new_cycle', 'P_new_cycle');
 
 fprintf('\n=== DESIGN OPTIMIZATION COMPLETE ===\n');
-fprintf('Results saved to ../results/\n\n');
+fprintf('Results saved to %s\n\n', results_dir);

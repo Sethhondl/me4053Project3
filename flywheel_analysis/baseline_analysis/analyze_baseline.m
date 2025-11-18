@@ -10,9 +10,19 @@
 
 clear; clc; close all;
 
+% Get script directory and set up paths
+script_dir = fileparts(mfilename('fullpath'));
+project_dir = fileparts(script_dir);
+
 % Add paths to utility functions and EE functions
-addpath('../utilities');
-addpath('../ee_functions');
+addpath(fullfile(project_dir, 'utilities'));
+addpath(fullfile(project_dir, 'ee_functions'));
+
+% Create results directory if it doesn't exist
+results_dir = fullfile(project_dir, 'results');
+if ~exist(results_dir, 'dir')
+    mkdir(results_dir);
+end
 
 fprintf('=== BASELINE FLYWHEEL SYSTEM ANALYSIS ===\n\n');
 
@@ -115,8 +125,8 @@ ylabel('Temperature [°C]');
 legend('Rotor Temp', 'Stator Temp', 'Location', 'best');
 title('Temperature vs State of Charge at Rated Power');
 
-saveas(gcf, '../results/baseline_losses_temp_vs_soc.fig');
-saveas(gcf, '../results/baseline_losses_temp_vs_soc.png');
+saveas(gcf, fullfile(results_dir, 'baseline_losses_temp_vs_soc.fig'));
+saveas(gcf, fullfile(results_dir, 'baseline_losses_temp_vs_soc.png'));
 
 %% 1b. Specific Power and Specific Energy
 
@@ -180,8 +190,8 @@ xlabel('Time [min]');
 ylabel('Rotor Temperature [°C]');
 title('Rotor Temperature During Cycle');
 
-saveas(gcf, '../results/baseline_storage_cycle.fig');
-saveas(gcf, '../results/baseline_storage_cycle.png');
+saveas(gcf, fullfile(results_dir, 'baseline_storage_cycle.fig'));
+saveas(gcf, fullfile(results_dir, 'baseline_storage_cycle.png'));
 
 %% Save baseline results
 baseline_results = struct();
@@ -194,10 +204,10 @@ baseline_results.specific_power = specific_power;
 baseline_results.specific_energy = specific_energy;
 baseline_results.efficiency_data = efficiency_data;
 
-save('../results/baseline_results.mat', 'baseline_results');
+save(fullfile(results_dir, 'baseline_results.mat'), 'baseline_results');
 
 fprintf('\n=== BASELINE ANALYSIS COMPLETE ===\n');
-fprintf('Results saved to ../results/\n\n');
+fprintf('Results saved to %s\n\n', results_dir);
 
 fprintf('NOTE: Still need to implement:\n');
 fprintf('  1d. AMB step response\n');
