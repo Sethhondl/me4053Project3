@@ -1,26 +1,40 @@
-# Claude Code logs
-logs/
+# MATLAB autosave files
+*.asv
+*.m~
 
-# macOS
+# MATLAB session files
+*.autosave
+
+# Simulink autosave
+*.slxc
+slprj/
+
+# Compiled MEX files
+*.mexa64
+*.mexmaci64
+*.mexw64
+
+# Code generation folders
+codegen/
+
+# MATLAB App Designer
+*.mlapp.bak
+
+# MATLAB Coder
+*.mex
+
+# OS-specific files
 .DS_Store
-
-# IDE
-.vscode/
-.idea/
+Thumbs.db
 *.swp
-*.swo
+*~
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-venv/
-env/
-ENV/
+# Temporary files
+*.tmp
+temp/
 
-# Data files (uncomment if needed)
-# *.csv
-# *.dat
-# *.h5
+# MATLAB crash dumps
+matlab_crash_dump.*
+
+# Placeholder EE functions (we have real ones in Project3_Functions)
+ee_functions/
