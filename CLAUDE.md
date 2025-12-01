@@ -143,9 +143,7 @@ omega_palpha = 6283 rad/s
 
 ## Key Assumptions and Derived Values
 
-1. **Rated current is THERMALLY LIMITED**: I_rated_pu = **0.70** (NOT 0.8!)
-   - At 100% SoC with I=0.70 pu, rotor losses ≈ 390 W → T ≈ 100°C
-   - At I=0.80 pu, T would exceed 100°C limit
+1. **Rated current**: I_rated_pu = **1.0** (maximum available from EE functions)
 2. Total shaft length ≈ 1.5 m
 3. AMB rotor components ≈ 10% of shaft mass
 4. Position controllers: use values from Appendix B (PID with derivative filter)
@@ -199,15 +197,12 @@ Project3/
 |--------|-------|-------|
 | Total rotating mass | 298.6 kg | Flywheel + shaft + magnets |
 | Moment of inertia | 5.43 kg·m² | About spin axis |
-| **Rated current** | **0.70 pu** | Thermally limited! |
-| **Rated power** | **218.3 kW** | At I=0.70 pu, max speed |
-| Specific power | 0.731 kW/kg | |
+| **Rated current** | **1.0 pu** | Maximum available |
 | Specific energy | 33.2 Wh/kg | |
 | Total energy storage | 9.92 kWh | Between 0-100% SoC |
-| Cycle efficiency | 97.4% | 15-min baseline cycle |
-| **Max temperature** | **99.9°C** | At 100% SoC, rated power |
-| Max rotor losses | 390 W | At 100% SoC |
 | Rotor runout | 0.004-0.005 µm | ISO G2.5 balance |
+
+*Note: Rated power, specific power, losses, temperature, and efficiency are calculated by running the scripts with the .p functions.*
 
 ---
 
@@ -233,25 +228,8 @@ torque = shear * motor_area * (shaft_diameter/2);
 power = torque * omega;
 ```
 
-### Thermally-Limited Rated Current
+### Rated Current
 ```matlab
-% Find max current that keeps T <= 100°C at worst case (100% SoC)
-sigma = 5.67e-8;  % Stefan-Boltzmann constant
-T_housing = 303;  % 30°C in Kelvin
-T_max = 373;      % 100°C in Kelvin
-eps_rotor = 0.4;
-eps_housing = 0.9;
-
-% Surface areas
-A_rotor = 2*pi*(D_fw/2)*L_fw + 2*pi*(D_fw/2)^2;
-A_housing = 2*pi*(D_housing/2)*L_fw + 2*pi*(D_housing/2)^2;
-
-% Radiation resistance factor
-F_rad = 1/eps_rotor + (A_rotor/A_housing)*(1/eps_housing - 1);
-
-% Max rotor loss for T = 100°C
-P_rotor_max = (T_max^4 - T_housing^4) * sigma * A_rotor / F_rad;
-
-% Search for current that produces this loss at max speed
-% I_rated is highest current where rotorLosses(..., I, max_rpm) <= P_rotor_max
+% Use maximum available current (1.0 pu)
+I_rated_pu = 1.0;
 ```

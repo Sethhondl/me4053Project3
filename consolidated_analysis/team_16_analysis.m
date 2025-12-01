@@ -59,9 +59,7 @@ fprintf('================================================================\n\n');
 % ASSUMPTIONS:
 %   1. Shaft length estimated at 1.5 m (includes motor, AMBs, clearances)
 %   2. AMB rotor components add ~10% to shaft mass
-%   3. Rated current is THERMALLY LIMITED to I_rated_pu = 0.70 (NOT 0.8!)
-%      - At 100% SoC with I=0.70 pu, rotor losses ~390 W -> T ~100C
-%      - Higher current would exceed the 100C temperature limit
+%   3. Rated current = 1.0 pu (maximum available)
 %   4. Housing temperature maintained at 30C (from Appendix B)
 % =========================================================================
 
@@ -192,10 +190,7 @@ fprintf('  Moment of inertia: %.4f kg*m^2\n\n', baseline.I_total);
 %   5. Calculate temperature using radiation heat transfer
 %
 % ASSUMPTIONS:
-%   1. Rated current is THERMALLY LIMITED: I_rated_pu = 0.70 (NOT 0.8!)
-%      - With low rotor emissivity (0.4), heat dissipation is limited
-%      - Max rotor loss for T <= 100C is ~390 W
-%      - At I=0.70 pu and max speed, rotor losses ~390 W -> T ~100C
+%   1. Rated current = 1.0 pu (maximum available)
 %   2. Current scales inversely with speed to maintain constant power
 %   3. Heat transfer via radiation only (vacuum environment)
 %   4. Only rotor losses heat the rotor (stator is outside vacuum)
@@ -215,9 +210,8 @@ fprintf('================================================================\n\n');
 SoC_range = linspace(0, 100, 50);
 
 % Calculate rated power from motor parameters
-% CRITICAL: Rated current is THERMALLY LIMITED to 0.70 pu (NOT 0.8!)
-% At I=0.70 pu and max speed, rotor losses ~390 W which gives T ~100C
-I_rated_pu = 0.70;
+% Rated current = 1.0 pu (maximum available)
+I_rated_pu = 1.0;
 shear_rated = magneticShear(baseline.magnet_thickness, I_rated_pu);
 motor_area = pi * baseline.shaft_diameter * baseline.motor_length;
 motor_radius = baseline.shaft_diameter / 2;
@@ -225,7 +219,7 @@ torque_rated = shear_rated * motor_area * motor_radius;
 baseline.power_rated = torque_rated * baseline.omega_max;
 
 fprintf('Motor Parameters:\n');
-fprintf('  Rated current: %.2f pu (THERMALLY LIMITED - not 0.8!)\n', I_rated_pu);
+fprintf('  Rated current: %.2f pu\n', I_rated_pu);
 fprintf('  Magnetic shear: %.2f Pa\n', shear_rated);
 fprintf('  Rated torque: %.2f Nm\n', torque_rated);
 fprintf('  Rated power: %.2f kW\n\n', baseline.power_rated/1000);
@@ -533,7 +527,11 @@ fprintf('AMB Parameters:\n');
 fprintf('  Position stiffness (K_s): %.2e N/m (negative/destabilizing)\n', K_s_bl);
 fprintf('  Force constant (K_i): %.2f N/A\n', K_i_bl);
 fprintf('  Coil inductance: %.4f H\n', amb_bl.coilInductance);
-fprintf('  Coil resistance: %.3f Ohms\n\n', amb_bl.coilResistance);
+fprintf('  Coil resistance: %.3f Ohms\n', amb_bl.coilResistance);
+
+% Unstable pole frequency (HW3 Q2d methodology)
+f_unstable_bl = sqrt(abs(K_s_bl) / baseline.total_mass) / (2*pi);
+fprintf('  Unstable pole frequency: %.2f Hz\n\n', f_unstable_bl);
 
 % Step disturbance: 10% of rated force
 F_step = 0.10 * baseline.amb_rated_force;
@@ -1338,60 +1336,112 @@ fprintf('  Force constant [N/A]: %.2f          %.2f\n', K_i_bl, K_i_new);
 fprintf('  Inductance [H]:       %.4f          %.4f\n', amb_bl.coilInductance, amb_new.coilInductance);
 fprintf('  Resistance [Ohm]:     %.3f           %.3f\n\n', amb_bl.coilResistance, amb_new.coilResistance);
 
-% Scaling factors
-mass_ratio = optimal.total_mass / baseline.total_mass;
-Ki_ratio = K_i_new / K_i_bl;
+% ===== CONTROLLER DESIGN USING HW3 METHODOLOGY =====
+% Design from first principles instead of scaling from baseline
 
-fprintf('Scaling Factors:\n');
-fprintf('  Mass ratio: %.3f\n', mass_ratio);
-fprintf('  Ki ratio: %.3f\n\n', Ki_ratio);
-
-% New position controller X (scaled from baseline)
 new_ctrl = struct();
-new_ctrl.kpx = baseline.kpx * mass_ratio / Ki_ratio;
-new_ctrl.kix = baseline.kix * mass_ratio / Ki_ratio;
-new_ctrl.kdx = baseline.kdx * mass_ratio / Ki_ratio;
-new_ctrl.omega_px = baseline.omega_px;
-
-% New tilting controller (scale by inertia ratio)
 L_amb_new = optimal.flywheel_length + 0.3;
-I_ratio = I_total_opt / baseline.I_total;
 
-new_ctrl.kp_alpha = baseline.kp_alpha * I_ratio / Ki_ratio;
-new_ctrl.ki_alpha = baseline.ki_alpha * I_ratio / Ki_ratio;
-new_ctrl.kd_alpha = baseline.kd_alpha * I_ratio / Ki_ratio;
-new_ctrl.omega_p_alpha = baseline.omega_p_alpha;
+% ----- CURRENT CONTROLLER (HW3 Q2a methodology) -----
+% Plant: G_p(s) = 1/(L*s + R)
+% Design PI controller for first-order closed-loop with 1.5 kHz bandwidth
+% Pole-zero cancellation: ki/kp = R/L (zero cancels plant pole)
+% Closed-loop bandwidth: kp = L * omega_bw
+
+omega_bw_current = 2*pi*1500;  % 1.5 kHz bandwidth target
+
+L_coil_new = amb_new.coilInductance;
+R_coil_new = amb_new.coilResistance;
+
+Kp_current_new = L_coil_new * omega_bw_current;
+Ki_current_new = Kp_current_new * R_coil_new / L_coil_new;
+
+fprintf('CURRENT CONTROLLER (HW3 Q2a - pole-zero cancellation, 1.5 kHz BW):\n');
+fprintf('  Coil: L = %.4f H, R = %.3f Ohm\n', L_coil_new, R_coil_new);
+fprintf('  New: kp = %.2f, ki = %.2f\n', Kp_current_new, Ki_current_new);
+fprintf('  Closed-loop time constant: %.4f ms\n\n', 1000*L_coil_new/Kp_current_new);
+
+% ----- POSITION CONTROLLER (HW3 Q2e methodology) -----
+% Target crossover frequency: 100 Hz
+% Derivative filter at 10x crossover
+
+% Unstable pole frequency (HW3 Q2d)
+omega_unstable_new = sqrt(abs(K_s_new) / optimal.total_mass);
+f_unstable_new = omega_unstable_new / (2*pi);
+
+f_crossover = 100;  % Hz
+omega_crossover = 2*pi*f_crossover;
+new_ctrl.omega_px = 10 * omega_crossover;  % Filter at 10x crossover
+
+fprintf('POSITION CONTROLLER (HW3 Q2e - 100 Hz crossover target):\n');
+fprintf('  Unstable pole frequency: %.2f Hz\n', f_unstable_new);
+fprintf('  Target crossover: %.0f Hz\n', f_crossover);
+fprintf('  Derivative filter: %.0f Hz\n\n', new_ctrl.omega_px/(2*pi));
+
+% Controller gains for unity gain at crossover
+plant_mag_at_crossover = K_i_new / abs(-optimal.total_mass * omega_crossover^2 - K_s_new);
+new_ctrl.kpx = 1 / plant_mag_at_crossover;
+omega_int = omega_crossover / 10;
+new_ctrl.kix = new_ctrl.kpx * omega_int;
+new_ctrl.kdx = new_ctrl.kpx / omega_crossover;
+
+% ----- TILTING CONTROLLER (HW3 principles) -----
+m_eff_tilt_new = I_total_opt / (L_amb_new/2)^2;
+K_s_tilt_new = K_s_new * 2;
+K_i_tilt_new = K_i_new * 2 * (L_amb_new/2);
+
+plant_mag_tilt = K_i_tilt_new / abs(-m_eff_tilt_new * omega_crossover^2 - K_s_tilt_new);
+new_ctrl.kp_alpha = 1 / plant_mag_tilt;
+new_ctrl.ki_alpha = new_ctrl.kp_alpha * omega_int;
+new_ctrl.kd_alpha = new_ctrl.kp_alpha / omega_crossover;
+new_ctrl.omega_p_alpha = new_ctrl.omega_px;
+
+% ----- STABILITY MARGIN VERIFICATION -----
+s_tf = tf('s');
+G_pos_new_tf = new_ctrl.kpx + new_ctrl.kix/s_tf + new_ctrl.kdx*s_tf/(1 + s_tf/new_ctrl.omega_px);
+G_plant_new_tf = K_i_new / (optimal.total_mass*s_tf^2 + K_s_new);
+L_new = G_pos_new_tf * G_plant_new_tf;
+[Gm, Pm, Wcg, Wcp] = margin(L_new);
+
+fprintf('STABILITY MARGINS:\n');
+fprintf('  Gain margin: %.1f dB at %.1f Hz\n', 20*log10(Gm), Wcg/(2*pi));
+fprintf('  Phase margin: %.1f deg at %.1f Hz\n\n', Pm, Wcp/(2*pi));
+
+% ----- DISTURBANCE REJECTION CHECK (HW3 Q2f) -----
+f_dist = 10; F_dist = 5;
+s_dist = 1j * 2*pi*f_dist;
+G_pos_at_dist = new_ctrl.kpx + new_ctrl.kix/s_dist + new_ctrl.kdx*s_dist/(1 + s_dist/new_ctrl.omega_px);
+denom_at_dist = optimal.total_mass*s_dist^2 + K_s_new + G_pos_at_dist*K_i_new;
+X_dist = F_dist / abs(denom_at_dist);
+
+fprintf('DISTURBANCE REJECTION (5N at 10Hz):\n');
+fprintf('  Deflection: %.4f mm (requirement: < 0.5 mm)\n\n', X_dist*1000);
 
 % Print transfer functions
 fprintf('CONTROLLER TRANSFER FUNCTIONS:\n\n');
 
-fprintf('1. Current Controller (same for both):\n');
+fprintf('1. Current Controller - Baseline (Appendix B):\n');
 fprintf('   G_ci(s) = %.0f + %.0f/s\n\n', baseline.Kp_current, baseline.Ki_current);
 
-fprintf('2. Position Controller X - Baseline:\n');
+fprintf('2. Current Controller - New (HW3, 1.5 kHz BW):\n');
+fprintf('   G_ci(s) = %.2f + %.2f/s\n\n', Kp_current_new, Ki_current_new);
+
+fprintf('3. Position Controller X - Baseline:\n');
 fprintf('   G_pos(s) = kp + ki/s + kd*s/(1+s/wp)\n');
-fprintf('   kp = %.4e N/m\n', baseline.kpx);
-fprintf('   ki = %.5e N/(m*s)\n', baseline.kix);
-fprintf('   kd = %.0f N*s/m\n', baseline.kdx);
-fprintf('   wp = %.0f rad/s\n\n', baseline.omega_px);
+fprintf('   kp = %.4e, ki = %.5e, kd = %.0f, wp = %.0f rad/s\n\n', ...
+    baseline.kpx, baseline.kix, baseline.kdx, baseline.omega_px);
 
-fprintf('3. Position Controller X - New Design:\n');
-fprintf('   kp = %.4e N/m\n', new_ctrl.kpx);
-fprintf('   ki = %.5e N/(m*s)\n', new_ctrl.kix);
-fprintf('   kd = %.0f N*s/m\n', new_ctrl.kdx);
-fprintf('   wp = %.0f rad/s\n\n', new_ctrl.omega_px);
+fprintf('4. Position Controller X - New (HW3, 100 Hz crossover):\n');
+fprintf('   kp = %.4e, ki = %.4e, kd = %.0f, wp = %.0f rad/s\n\n', ...
+    new_ctrl.kpx, new_ctrl.kix, new_ctrl.kdx, new_ctrl.omega_px);
 
-fprintf('4. Tilting Controller - Baseline:\n');
-fprintf('   kp = %.4e N*m/rad\n', baseline.kp_alpha);
-fprintf('   ki = %.5e N*m/(rad*s)\n', baseline.ki_alpha);
-fprintf('   kd = %.0f N*m*s/rad\n', baseline.kd_alpha);
-fprintf('   wp = %.0f rad/s\n\n', baseline.omega_p_alpha);
+fprintf('5. Tilting Controller - Baseline:\n');
+fprintf('   kp = %.4e, ki = %.5e, kd = %.0f, wp = %.0f rad/s\n\n', ...
+    baseline.kp_alpha, baseline.ki_alpha, baseline.kd_alpha, baseline.omega_p_alpha);
 
-fprintf('5. Tilting Controller - New Design:\n');
-fprintf('   kp = %.4e N*m/rad\n', new_ctrl.kp_alpha);
-fprintf('   ki = %.5e N*m/(rad*s)\n', new_ctrl.ki_alpha);
-fprintf('   kd = %.0f N*m*s/rad\n', new_ctrl.kd_alpha);
-fprintf('   wp = %.0f rad/s\n\n', new_ctrl.omega_p_alpha);
+fprintf('6. Tilting Controller - New (HW3):\n');
+fprintf('   kp = %.4e, ki = %.4e, kd = %.0f, wp = %.0f rad/s\n\n', ...
+    new_ctrl.kp_alpha, new_ctrl.ki_alpha, new_ctrl.kd_alpha, new_ctrl.omega_p_alpha);
 
 %% ========================================================================
 % DELIVERABLE 3b: AMB STEP RESPONSE COMPARISON

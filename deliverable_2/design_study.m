@@ -53,14 +53,15 @@ axial_clearance = 0.020;       % 20 mm between components
 radial_clearance_flywheel = 0.020;  % 20 mm flywheel to housing
 radial_clearance_other = 0.001;     % 1 mm other components to housing
 
-% Thermal parameters
-epsilon = 0.8;           % Emissivity
+% Thermal parameters (from Table 1 in project spec)
+epsilon_rotor = 0.4;     % Rotor emissivity
+epsilon_housing = 0.9;   % Housing emissivity
 sigma = 5.67e-8;         % Stefan-Boltzmann constant [W/(m²·K⁴)]
-T_amb = 293;             % Ambient [K] = 20°C
+T_housing = 303;         % Housing temperature [K] = 30°C (from Appendix B)
 
-% Current controller (same as baseline)
-Kp_current = 258.75;
-Ki_current = 1611.54;
+% Current controller (from Appendix B)
+Kp_current = 345;
+Ki_current = 2149;
 
 %% ========================================================================
 % SECTION 2: DESIGN VARIABLE SWEEP
@@ -147,8 +148,8 @@ for i = 1:n_mag
         % ================================================================
         % STEP 3: Size motor for required power
         % ================================================================
-        % Rated current = 0.8 pu (same as baseline)
-        I_rated_pu = 0.8;
+        % Rated current = 1.0 pu (maximum available)
+        I_rated_pu = 1.0;
 
         % Get magnetic shear stress
         shear = magneticShear(t_mag, I_rated_pu);
@@ -157,15 +158,15 @@ for i = 1:n_mag
         % Torque = shear * pi * d_shaft * L_motor * (d_shaft/2)
         % Power = Torque * omega
 
-        % Target minimum power: 150 kW for new cycle
-        P_target = 150000;  % [W]
+        % Target minimum power: 450 kW for Team 16 cycle (peaks ~430 kW)
+        P_target = 450000;  % [W]
 
         % Calculate required motor length
         torque_per_length = shear * pi * d_shaft * (d_shaft/2);
         L_motor_min = P_target / (torque_per_length * omega_max);
 
-        % Round up to reasonable value, max 0.4 m
-        L_motor = max(0.100, min(0.400, ceil(L_motor_min * 100) / 100));
+        % Round up to reasonable value, max 0.6 m for higher power requirements
+        L_motor = max(0.150, min(0.600, ceil(L_motor_min * 100) / 100));
         results.motor_length(i,j) = L_motor;
 
         % Recalculate actual rated power
@@ -178,12 +179,11 @@ for i = 1:n_mag
         % ================================================================
         % STEP 4: Size flywheel for required energy storage
         % ================================================================
-        % Target energy: enough for cycle with margin
-        % For frequency regulation, we need enough capacity to handle
-        % the cumulative energy swing during the cycle
-        % With 50% SoC start, need ~2x the max swing to stay above 0%
-        % Target 18 kWh to provide adequate margin
-        E_target = 18e3 * 3600;  % 18 kWh in Joules
+        % Target energy: enough for Team 16 cycle with margin
+        % Cycle analysis shows: max charge excursion ~17 kWh, max discharge ~9.5 kWh
+        % Starting at 50% SoC, need 0.5*capacity >= 17 kWh -> capacity >= 34 kWh
+        % Target 40 kWh to provide adequate safety margin
+        E_target = 40e3 * 3600;  % 40 kWh in Joules
 
         % Energy = 0.5 * I * (omega_max^2 - omega_min^2)
         % For hollow cylinder: I = 0.5 * m * (r_outer^2 + r_inner^2)
@@ -204,8 +204,8 @@ for i = 1:n_mag
         % Required flywheel length
         L_flywheel_min = I_required / I_per_length;
 
-        % Round up, with limits
-        L_flywheel = max(0.300, min(2.000, ceil(L_flywheel_min * 10) / 10));
+        % Round up, with limits (increased for higher energy requirements)
+        L_flywheel = max(0.500, min(4.000, ceil(L_flywheel_min * 10) / 10));
         results.flywheel_length(i,j) = L_flywheel;
 
         % ================================================================
@@ -265,12 +265,16 @@ for i = 1:n_mag
         min_soc = 50;
         max_temp_cycle = 20;
 
-        % Surface area for thermal calculation
+        % Surface area for thermal calculation - correct two-surface enclosure model
         A_surface = 2*pi*r_outer*L_flywheel + 2*pi*r_outer^2;
+        housing_clearance_ds = 0.020;  % 20mm radial clearance
+        housing_inner_dia_ds = d_flywheel + 2*housing_clearance_ds;
+        A_housing_ds = 2*pi*(housing_inner_dia_ds/2)*L_flywheel + 2*pi*(housing_inner_dia_ds/2)^2;
+        rad_factor_ds = 1/epsilon_rotor + (A_surface/A_housing_ds)*(1/epsilon_housing - 1);
 
         for k = 1:length(t_cycle)
-            % Grid power demand
-            P_grid = newStorageCycle(t_cycle(k));
+            % Grid power demand (using team-specific cycle)
+            P_grid = team_16_cycle(t_cycle(k));
 
             % Current SoC and speed
             omega_rpm = omega_current * 60 / (2*pi);
@@ -290,8 +294,9 @@ for i = 1:n_mag
             P_loss = P_rotor + P_stator;
             E_loss_total = E_loss_total + P_loss * dt;
 
-            % Temperature (steady-state radiation)
-            T_rotor = (T_amb^4 + P_rotor/(epsilon*sigma*A_surface))^(1/4);
+            % Temperature using two-surface enclosure radiation model
+            % Q = sigma * A * (T_rotor^4 - T_housing^4) / rad_factor
+            T_rotor = (T_housing^4 + P_rotor*rad_factor_ds/(sigma*A_surface))^(1/4);
             T_celsius = T_rotor - 273;
             if T_celsius > max_temp_cycle
                 max_temp_cycle = T_celsius;
@@ -352,8 +357,8 @@ for i = 1:n_mag
             viable = 0;
         end
 
-        % Also check that rated power can meet cycle demand
-        if P_rated < 60000  % Need at least 60 kW for the cycle
+        % Also check that rated power can meet cycle demand (Team 16 peaks ~430 kW)
+        if P_rated < 430000  % Need at least 430 kW for the Team 16 cycle
             viable = 0;
         end
 
@@ -586,7 +591,13 @@ I_magnet = 0.5 * m_magnet * (r_mag^2 + r_inner^2);
 I_total = I_flywheel + I_shaft + I_magnet;
 
 A_surface = 2*pi*r_outer*L_flywheel + 2*pi*r_outer^2;
-I_rated_pu = 0.8;
+% Correct two-surface enclosure radiation model
+housing_clearance_opt = 0.020;  % 20mm radial clearance
+housing_inner_dia_opt = d_flywheel + 2*housing_clearance_opt;
+A_housing_opt = 2*pi*(housing_inner_dia_opt/2)*L_flywheel + 2*pi*(housing_inner_dia_opt/2)^2;
+rad_factor_opt = 1/epsilon_rotor + (A_surface/A_housing_opt)*(1/epsilon_housing - 1);
+
+I_rated_pu = 1.0;  % Maximum available current
 shear = magneticShear(t_mag, I_rated_pu);
 P_rated = shear * pi * d_shaft * L_motor * (d_shaft/2) * omega_max;
 
@@ -599,7 +610,7 @@ power_loss_array = zeros(size(t_cycle));
 temp_array = zeros(size(t_cycle));
 
 for k = 1:length(t_cycle)
-    P_grid = newStorageCycle(t_cycle(k));
+    P_grid = team_16_cycle(t_cycle(k));
     power_grid_array(k) = P_grid;
 
     omega_rpm = omega_current * 60 / (2*pi);
@@ -613,7 +624,8 @@ for k = 1:length(t_cycle)
     P_stator = statorLosses(t_mag, d_shaft, L_motor, I_pu, omega_rpm);
     power_loss_array(k) = P_rotor + P_stator;
 
-    T_rotor = (T_amb^4 + P_rotor/(epsilon*sigma*A_surface))^(1/4);
+    % Two-surface enclosure radiation model
+    T_rotor = (T_housing^4 + P_rotor*rad_factor_opt/(sigma*A_surface))^(1/4);
     temp_array(k) = T_rotor - 273;
 
     E_current = 0.5 * I_total * omega_current^2;
@@ -635,7 +647,7 @@ plot(t_cycle/3600, power_grid_array/1000, 'b-', 'LineWidth', 1.5);
 grid on;
 xlabel('Time [hours]', 'FontSize', 11);
 ylabel('Grid Power [kW]', 'FontSize', 11);
-title('New Storage Cycle Power Demand', 'FontSize', 12);
+title('Team 16 Storage Cycle Power Demand', 'FontSize', 12);
 
 subplot(2,2,2);
 plot(t_cycle/3600, SoC_array, 'r-', 'LineWidth', 2);

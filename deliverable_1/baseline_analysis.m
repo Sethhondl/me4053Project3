@@ -68,9 +68,28 @@ params.min_speed_rpm = params.max_speed_rpm / 2;  % 20,000 r/min at 0% SoC
 params.omega_max = params.max_speed_rpm * 2*pi / 60;  % [rad/s]
 params.omega_min = params.min_speed_rpm * 2*pi / 60;  % [rad/s]
 
-% Current controller transfer function: G_ci(s) = 258.75 + 1611.54/s
-params.Kp_current = 258.75;
-params.Ki_current = 1611.54;
+% Current controller transfer function: G_ci(s) = 345 + 2149/s (from Appendix B)
+params.Kp_current = 345;
+params.Ki_current = 2149;
+
+% Housing temperature (from Appendix B)
+params.T_housing = 30;  % [°C]
+
+% Emissivities (from Table 1)
+params.emissivity_rotor = 0.4;
+params.emissivity_housing = 0.9;
+
+% Position controller x (PID with derivative filter) - from Appendix B
+params.kpx = 1.2639e8;       % Proportional gain
+params.kix = 1.16868e9;      % Integral gain
+params.kdx = 252790;         % Derivative gain
+params.omega_px = 3770;      % Derivative filter cutoff [rad/s]
+
+% Tilting position controller (PID with derivative filter) - from Appendix B
+params.kp_alpha = 7.6992e7;  % Proportional gain
+params.ki_alpha = 1.18953e9; % Integral gain
+params.kd_alpha = 80294;     % Derivative gain
+params.omega_p_alpha = 6283; % Derivative filter cutoff [rad/s]
 
 fprintf('System Parameters Loaded Successfully\n\n');
 
@@ -136,18 +155,20 @@ fprintf('==============================================\n\n');
 % Define SoC range
 SoC_range = linspace(0, 100, 50);  % 0% to 100% SoC
 
-% Calculate rated power from maximum speed and motor parameters
-% Rated power = torque * omega = (shear_stress * area * radius) * omega
-% Note: EE functions use per-unit current (0-1.0 range)
-% Use 80% of maximum current for rated operation
-I_rated_pu = 0.8;  % Per-unit rated current [pu]
-shear_rated = magneticShear(params.magnet_thickness, I_rated_pu);
+% Rated current = 1.0 pu (maximum available current)
+% Using the .p functions from Project3_Functions to calculate losses
+I_rated_pu = 1.0;
+
+fprintf('Using rated current: %.2f pu\n', I_rated_pu);
+
+% Calculate rated power at this current
 motor_area = pi * params.shaft_diameter * params.motor_length;
 motor_radius = params.shaft_diameter / 2;
+shear_rated = magneticShear(params.magnet_thickness, I_rated_pu);
 torque_rated = shear_rated * motor_area * motor_radius;
 power_rated = torque_rated * params.omega_max;  % [W]
 
-fprintf('Calculated rated power: %.2f kW (at %.1f pu current)\n', power_rated/1000, I_rated_pu);
+fprintf('Calculated rated power: %.2f kW\n', power_rated/1000);
 fprintf('Analyzing losses at rated power across SoC range...\n\n');
 
 % Initialize arrays
@@ -182,17 +203,29 @@ for i = 1:length(SoC_range)
     total_loss_array(i) = P_rotor + P_stator;
 
     % Calculate temperature rise using radiation heat transfer
-    % In vacuum, only radiation: Q = ε * σ * A * (T^4 - T_amb^4)
-    % Solve for T: T = (T_amb^4 + Q/(ε*σ*A))^(1/4)
+    % In vacuum, only radiation between rotor and housing
+    % Two-surface enclosure: Q = σ * A_rotor * (T_rotor^4 - T_housing^4) /
+    %                            (1/ε_rotor + (A_rotor/A_housing)*(1/ε_housing - 1))
     % NOTE: Only ROTOR losses heat the rotor (stator is stationary, outside vacuum)
-    epsilon = 0.8;  % Emissivity (composite/steel)
     sigma = 5.67e-8;  % Stefan-Boltzmann constant [W/(m²·K⁴)]
-    T_amb = 293;  % Ambient temperature [K] = 20°C
-    A_surface = 2*pi*(params.flywheel_diameter/2)*params.flywheel_length + ...
-        2*pi*(params.flywheel_diameter/2)^2;  % Cylinder surface area [m²]
+    T_housing = params.T_housing + 273;  % Housing temperature [K] = 30°C
 
-    % Solve for temperature (using only rotor losses, not total)
-    T_rotor = (T_amb^4 + rotor_loss_array(i)/(epsilon*sigma*A_surface))^(1/4);
+    % Rotor surface area (flywheel cylinder)
+    A_rotor = 2*pi*(params.flywheel_diameter/2)*params.flywheel_length + ...
+        2*pi*(params.flywheel_diameter/2)^2;  % [m²]
+
+    % Housing surface area (with 20mm radial clearance from flywheel)
+    housing_inner_diameter = params.flywheel_diameter + 2*0.020;  % 20mm clearance
+    A_housing = 2*pi*(housing_inner_diameter/2)*params.flywheel_length + ...
+        2*pi*(housing_inner_diameter/2)^2;  % [m²]
+
+    % Radiation resistance factor for two-surface enclosure
+    rad_factor = 1/params.emissivity_rotor + ...
+        (A_rotor/A_housing)*(1/params.emissivity_housing - 1);
+
+    % Solve for rotor temperature: Q = σ * A_rotor * (T_rotor^4 - T_housing^4) / rad_factor
+    % T_rotor^4 = T_housing^4 + Q * rad_factor / (σ * A_rotor)
+    T_rotor = (T_housing^4 + rotor_loss_array(i)*rad_factor/(sigma*A_rotor))^(1/4);
     temperature_array(i) = T_rotor - 273;  % Convert to Celsius
 end
 
@@ -395,130 +428,118 @@ amb_mass = m_total;                    % Use calculated rotating group mass [kg]
 fprintf('AMB Parameters:\n');
 fprintf('  Position stiffness (K_s): %.2f N/m (negative/destabilizing)\n', K_s);
 fprintf('  Force constant (K_i): %.2f N/A\n', K_i);
+fprintf('  Bias current: %.3f A\n', amb_params.biasCurrent);
+fprintf('  Rated control current: %.3f A\n', amb_params.ratedControlCurrent);
 fprintf('  Coil inductance: %.4f H\n', amb_params.coilInductance);
 fprintf('  Coil resistance: %.3f Ohms\n', amb_params.coilResistance);
+fprintf('  Axial length: %.4f m\n', amb_params.axialLength);
 
-% Design PD position controller
-% Target: critically damped or slightly underdamped system
-% Controller: G_c(s) = Kp + Kd*s
-% Closed loop needs to be stable with good damping
+% Calculate unstable pole frequency (HW3 Q2d methodology)
+% Plant: Y(s)/I(s) = Ki / (m*s^2 - |Ks|) has poles at s = ±sqrt(|Ks|/m)
+f_unstable = sqrt(abs(K_s) / amb_mass) / (2*pi);
+fprintf('  Unstable pole frequency: %.2f Hz\n', f_unstable);
 
-% Natural frequency target (for reasonable settling time)
-omega_n_target = 2*pi*50;  % 50 Hz natural frequency
+% Use position controller from Appendix B (PID with derivative filter)
+% Transfer function: G(s) = kpx + kix/s + s*kdx/(1 + s/omega_px)
+fprintf('\nPosition Controller (from Appendix B):\n');
+fprintf('  Kp = %.4e\n', params.kpx);
+fprintf('  Ki = %.4e\n', params.kix);
+fprintf('  Kd = %.4e\n', params.kdx);
+fprintf('  omega_p = %.1f rad/s\n\n', params.omega_px);
 
-% For PD controller with current loop dynamics
-% Use pole placement for desired damping ratio
-zeta_target = 0.7;  % Slight underdamping
-
-% Controller gains (tuned for stability and performance)
-Kp_pos = omega_n_target^2 * amb_mass / K_i;  % Proportional gain
-Kd_pos = 2*zeta_target*omega_n_target * amb_mass / K_i;  % Derivative gain
-
-fprintf('Position Controller Design:\n');
-fprintf('  Kp = %.2f A/m\n', Kp_pos);
-fprintf('  Kd = %.4f A·s/m\n\n', Kd_pos);
-
-% Simulation parameters
-dt_amb = 1e-5;  % Time step [s]
-t_amb = 0:dt_amb:0.05;  % 50 ms simulation
-
-% Step disturbance: 10% of rated force
+% Step disturbance: 10% of top AMB's rated force
 F_step = 0.10 * params.amb_rated_force;  % [N]
 
-fprintf('Simulating AMB step response to %.1f N disturbance...\n', F_step);
+fprintf('Simulating AMB step response to %.1f N disturbance at zero speed...\n', F_step);
+fprintf('Using transfer function approach for accurate high-gain simulation...\n');
 
-% Simulate at two conditions
-omega_conditions = [0, params.omega_max];  % 0 RPM and 100% SoC
-condition_names = {'0 RPM (Zero Speed)', sprintf('%.0f RPM (100%% SoC)', params.max_speed_rpm)};
+% Build transfer functions for proper closed-loop analysis
+s = tf('s');
 
-figure('Name', 'Part 1d: AMB Step Response', 'Position', [100 100 1200 800]);
+% Position controller: G_cx(s) = kpx + kix/s + s*kdx/(1 + s/omega_px)
+G_cx = params.kpx + params.kix/s + s*params.kdx/(1 + s/params.omega_px);
 
-for cond = 1:2
-    omega_spin = omega_conditions(cond);
+% Current controller: G_ci(s) = Kp + Ki/s (simplified as fast first-order for analysis)
+% For step response, approximate as unity gain (current loop much faster than position loop)
+G_ci = 1;  % Fast current loop approximation
 
-    % State variables: [position; velocity; current]
-    x = 0;  % Position [m]
-    v = 0;  % Velocity [m/s]
-    i = 0;  % Current [A]
+% AMB plant: Force to displacement
+% m*x'' = F_amb + F_dist = K_i*i + K_s*x + F_dist
+% Plant from control current to position: X(s)/I(s) = K_i / (m*s^2 - K_s)
+% Note: K_s < 0, so denominator is m*s^2 + |K_s|
+G_plant = K_i / (amb_mass*s^2 + K_s);
 
-    % Arrays for storage
-    x_array = zeros(size(t_amb));
-    v_array = zeros(size(t_amb));
-    i_array = zeros(size(t_amb));
-    f_array = zeros(size(t_amb));
+% Open-loop transfer function: position error to position
+L = G_cx * G_ci * G_plant;
 
-    % Simulation loop
-    for k = 1:length(t_amb)
-        % Position controller (PD)
-        i_cmd = -Kp_pos * x - Kd_pos * v;
+% Closed-loop transfer function from disturbance to position
+% X(s)/F_dist(s) = G_dist / (1 + L)
+% where G_dist = 1/(m*s^2 - K_s)
+G_dist = 1 / (amb_mass*s^2 + K_s);
+T_dist = G_dist / (1 + L);
 
-        % Current controller (PI in s-domain, implemented as discrete)
-        % di/dt = Kp_current * (i_cmd - i) + Ki_current * integral_error
-        % Simplified: current tracks command with first-order lag
-        tau_current = 1 / params.Kp_current;  % Current loop time constant
-        di_dt = (i_cmd - i) / tau_current;
+% Closed-loop transfer function from disturbance to control force
+% F_ctrl(s)/F_dist(s) = -L / (1 + L) * G_dist * (m*s^2 - K_s) / K_i
+T_force = -L * G_dist / (1 + L);
 
-        % AMB force
-        F_amb = K_i * i - K_s * x;
+% Simulate step response
+t_amb = linspace(0, 0.05, 5000);  % 50 ms simulation
 
-        % Disturbance force (step at t=0)
-        F_dist = F_step;
+% Position response to step disturbance
+[x_array, t_out] = step(T_dist * F_step, t_amb);
 
-        % Gyroscopic effects (cross-coupling between axes)
-        % For single axis analysis, simplified model
-        % F_gyro ≈ 0 for this step response in x-direction
+% Force response (AMB force countering disturbance)
+[f_ctrl, ~] = step(T_force * F_step * K_i, t_amb);
 
-        % Equation of motion: m*a = F_amb + F_dist
-        a = (F_amb + F_dist) / amb_mass;
+% Current response (force / K_i)
+i_array = f_ctrl / K_i;
 
-        % Integrate states (Euler method)
-        v = v + a * dt_amb;
-        x = x + v * dt_amb;
-        i = i + di_dt * dt_amb;
+% Calculate total AMB force (should approach -F_step at steady state)
+f_array = f_ctrl;
 
-        % Store values
-        x_array(k) = x;
-        v_array(k) = v;
-        i_array(k) = i;
-        f_array(k) = F_amb;
-    end
+% Create figure for Part 1d
+figure('Name', 'Part 1d: AMB Step Response', 'Position', [100 100 1000 800]);
 
-    % Plot results
-    % Current
-    subplot(3,2,1+cond-1);
-    plot(t_amb*1000, i_array, 'b-', 'LineWidth', 2);
-    grid on;
-    xlabel('Time [ms]', 'FontSize', 11);
-    ylabel('Current [A]', 'FontSize', 11);
-    title(['AMB Current - ' condition_names{cond}], 'FontSize', 12);
+% Current
+subplot(3,1,1);
+plot(t_out*1000, i_array, 'b-', 'LineWidth', 2);
+grid on;
+xlabel('Time [ms]', 'FontSize', 11);
+ylabel('Current [A]', 'FontSize', 11);
+title('AMB Current Response - Zero Speed', 'FontSize', 12);
 
-    % Force
-    subplot(3,2,3+cond-1);
-    plot(t_amb*1000, f_array, 'r-', 'LineWidth', 2);
-    grid on;
-    xlabel('Time [ms]', 'FontSize', 11);
-    ylabel('AMB Force [N]', 'FontSize', 11);
-    title(['AMB Force - ' condition_names{cond}], 'FontSize', 12);
+% Force
+subplot(3,1,2);
+plot(t_out*1000, f_array, 'r-', 'LineWidth', 2);
+hold on;
+yline(-F_step, 'k--', 'LineWidth', 1.5, 'Label', 'Target (-F_{dist})');
+grid on;
+xlabel('Time [ms]', 'FontSize', 11);
+ylabel('AMB Force [N]', 'FontSize', 11);
+title('AMB Force Response - Zero Speed', 'FontSize', 12);
 
-    % Rotor orbit
-    subplot(3,2,5+cond-1);
-    plot(x_array*1e6, zeros(size(x_array)), 'k-', 'LineWidth', 2);
-    hold on;
-    plot(x_array(1)*1e6, 0, 'go', 'MarkerSize', 10, 'MarkerFaceColor', 'g');
-    plot(x_array(end)*1e6, 0, 'ro', 'MarkerSize', 10, 'MarkerFaceColor', 'r');
-    grid on;
-    xlabel('X Position [\mum]', 'FontSize', 11);
-    ylabel('Y Position [\mum]', 'FontSize', 11);
-    title(['Rotor Orbit - ' condition_names{cond}], 'FontSize', 12);
-    legend('Trajectory', 'Start', 'End', 'Location', 'best');
-    axis equal;
-end
+% Rotor position
+subplot(3,1,3);
+plot(t_out*1000, x_array*1e6, 'k-', 'LineWidth', 2);
+grid on;
+xlabel('Time [ms]', 'FontSize', 11);
+ylabel('Rotor Position [\mum]', 'FontSize', 11);
+title('Rotor Position Response - Zero Speed', 'FontSize', 12);
 
 % Save figure
 saveas(gcf, 'part1d_amb_step_response.fig');
 saveas(gcf, 'part1d_amb_step_response.png');
 
-fprintf('Part 1d completed. Plots saved.\n\n');
+fprintf('Part 1d completed. Plots saved.\n');
+fprintf('  Max displacement: %.4f µm\n', max(abs(x_array))*1e6);
+fprintf('  Final displacement: %.4f µm\n', abs(x_array(end))*1e6);
+
+% Check stability by examining if response settles
+if abs(x_array(end)) < 0.1 * max(abs(x_array)) || max(abs(x_array)) < 1e-6
+    fprintf('  System is stable (response settles)\n\n');
+else
+    fprintf('  WARNING: System response may not be settling properly\n\n');
+end
 
 %% ========================================================================
 % PART 1e: DYNAMIC STIFFNESS
@@ -532,43 +553,74 @@ fprintf('==============================================\n\n');
 freq_range = logspace(0, 3, 200);  % 1 Hz to 1000 Hz
 omega_range = 2*pi*freq_range;  % Convert to rad/s
 
-% Calculate dynamic stiffness transfer function
-% Stiffness = Force / Displacement
-% From closed-loop transfer function: X(s)/F_dist(s)
-
-% System: m*s^2*X + (Kd*Ki)*s*X + (Kp*Ki - Ks)*X = F_dist
-% Transfer function: X/F = 1 / (m*s^2 + (Kd*Ki)*s + (Kp*Ki - Ks))
-
-% Dynamic stiffness magnitude: |F/X| = |m*s^2 + (Kd*Ki)*s + (Kp*Ki - Ks)|
+% Position controller transfer function (from Appendix B):
+% G_cx(s) = kpx + kix/s + s*kdx/(1 + s/omega_px)
+%
+% For the closed-loop system with AMB:
+% Plant: G_p(s) = K_i / (m*s^2 - K_s)  where K_s < 0 (destabilizing)
+%
+% Dynamic stiffness = F_dist / X = 1 / (closed-loop X/F_dist)
 
 stiffness_radial = zeros(size(omega_range));
 stiffness_tilt = zeros(size(omega_range));
 
-% Radial stiffness (single AMB analysis)
-for i = 1:length(omega_range)
-    s = 1j * omega_range(i);
-    % Dynamic stiffness = 1 / (displacement/force)
-    % H(s) = X/F = 1 / (m*s^2 + c*s + k)
-    % Stiffness = 1/H(s) = m*s^2 + c*s + k
-    k_eff = Kp_pos * K_i - K_s;
-    c_eff = Kd_pos * K_i;
-    stiffness_radial(i) = abs(amb_mass * s^2 + c_eff * s + k_eff);
+% Radial stiffness using specified position controller
+fprintf('Computing radial dynamic stiffness...\n');
+for idx = 1:length(omega_range)
+    s = 1j * omega_range(idx);
+
+    % Position controller transfer function (PID with derivative filter)
+    % G_cx(s) = kpx + kix/s + s*kdx/(1 + s/omega_px)
+    G_cx = params.kpx + params.kix/s + s*params.kdx/(1 + s/params.omega_px);
+
+    % Open-loop: L(s) = G_cx(s) * K_i / (m*s^2 - K_s)
+    % Note: K_s is already negative (destabilizing stiffness)
+    plant_num = K_i;
+    plant_den = amb_mass*s^2 + K_s;  % K_s < 0, so this is m*s^2 - |K_s|
+
+    L = G_cx * plant_num / plant_den;
+
+    % Closed-loop: X/F_dist = (1/plant_den) / (1 + L)
+    %            = 1 / (plant_den + G_cx * K_i)
+    % Dynamic stiffness = 1 / (X/F_dist) = plant_den + G_cx * K_i
+    dyn_stiff = plant_den + G_cx * K_i;
+    stiffness_radial(idx) = abs(dyn_stiff);
 end
 
-% Tilting stiffness (requires two AMBs working together)
-% Simplified: assume AMB separation distance
-L_amb = params.flywheel_length + 0.3;  % AMB separation ~1.3 m
-I_polar = I_total;  % Polar moment of inertia (approximation)
+% Tilting stiffness using tilting controller (from Appendix B)
+% G_alpha(s) = kp_alpha + ki_alpha/s + s*kd_alpha/(1 + s/omega_p_alpha)
+fprintf('Computing tilting dynamic stiffness...\n');
 
-% For tilting mode, effective mass becomes moment of inertia / L^2
-m_eff_tilt = I_polar / L_amb^2;
+% AMB separation distance (estimated from geometry)
+L_amb = params.flywheel_length + 0.3;  % ~1.3 m separation
 
-for i = 1:length(omega_range)
-    s = 1j * omega_range(i);
-    k_eff = Kp_pos * K_i - K_s;
-    c_eff = Kd_pos * K_i;
-    % Multiply by 2 for two AMBs working together
-    stiffness_tilt(i) = abs(2 * (m_eff_tilt * s^2 + c_eff * s + k_eff));
+% Transverse moment of inertia (for tilting motion)
+% Approximate as solid cylinder for simplicity
+I_transverse = (1/12) * m_total * (3*(params.flywheel_diameter/2)^2 + params.flywheel_length^2);
+
+for idx = 1:length(omega_range)
+    s = 1j * omega_range(idx);
+
+    % Tilting controller transfer function
+    G_alpha = params.kp_alpha + params.ki_alpha/s + s*params.kd_alpha/(1 + s/params.omega_p_alpha);
+
+    % For tilting mode, the effective stiffness relates torque to angle
+    % Each AMB contributes force at distance L_amb/2 from center
+    % Effective moment arm = L_amb/2
+    % The plant for tilting: theta/M = 1/(I_transverse*s^2 - K_s_tilt)
+    % where K_s_tilt ≈ K_s * (L_amb/2)^2 * 2 for two AMBs
+
+    K_s_tilt = K_s * (L_amb/2)^2 * 2;  % Tilting stiffness (negative)
+    K_i_tilt = K_i * (L_amb/2) * 2;    % Tilting force constant
+
+    plant_den_tilt = I_transverse*s^2 + K_s_tilt;
+
+    % Dynamic stiffness for tilting (torque per radian)
+    dyn_stiff_tilt = plant_den_tilt + G_alpha * K_i_tilt;
+
+    % Convert to equivalent linear stiffness at AMB location
+    % F/x = M/theta * (1/r^2) where r = L_amb/2
+    stiffness_tilt(idx) = abs(dyn_stiff_tilt) / (L_amb/2)^2;
 end
 
 % Create figure for Part 1e
@@ -589,8 +641,12 @@ saveas(gcf, 'part1e_dynamic_stiffness.png');
 fprintf('Part 1e completed. Plots saved.\n');
 fprintf('  Radial stiffness at 10 Hz: %.2f MN/m\n', ...
     interp1(freq_range, stiffness_radial, 10)/1e6);
-fprintf('  Radial stiffness at 100 Hz: %.2f MN/m\n\n', ...
+fprintf('  Radial stiffness at 100 Hz: %.2f MN/m\n', ...
     interp1(freq_range, stiffness_radial, 100)/1e6);
+fprintf('  Tilting stiffness at 10 Hz: %.2f MN/m\n', ...
+    interp1(freq_range, stiffness_tilt, 10)/1e6);
+fprintf('  Tilting stiffness at 100 Hz: %.2f MN/m\n\n', ...
+    interp1(freq_range, stiffness_tilt, 100)/1e6);
 
 %% ========================================================================
 % PART 1f: ROTOR RUNOUT
@@ -600,40 +656,46 @@ fprintf('==============================================\n');
 fprintf('PART 1f: Rotor Runout Analysis\n');
 fprintf('==============================================\n\n');
 
-% Mass imbalance assumption: ISO G2.5 balance grade
+% Mass imbalance assumption: ISO G2.5 balance grade (from Table 1)
 % G2.5 means: e*omega = 2.5 mm/s (where e = eccentricity, omega = angular velocity)
 % This is typical for precision rotors
 
 G_grade = 2.5;  % ISO balance grade G2.5 [mm/s]
 
-% Calculate runout for each SoC
+% Calculate runout for each SoC using the specified controller
 SoC_runout = linspace(0, 100, 100);
 runout_array = zeros(size(SoC_runout));
 omega_runout_array = zeros(size(SoC_runout));
 
-for i = 1:length(SoC_runout)
+fprintf('Computing rotor runout using specified PID controller...\n');
+
+for idx = 1:length(SoC_runout)
     % Speed at this SoC
-    omega = params.omega_min + (params.omega_max - params.omega_min) * SoC_runout(i)/100;
-    omega_runout_array(i) = omega * 60 / (2*pi);  % Convert to RPM
+    omega = params.omega_min + (params.omega_max - params.omega_min) * SoC_runout(idx)/100;
+    omega_runout_array(idx) = omega * 60 / (2*pi);  % Convert to RPM
 
     % Eccentricity from balance grade
     e = (G_grade * 1e-3) / omega;  % [m] - eccentricity
 
-    % Runout amplitude from unbalance response
-    % Response amplitude: r = (m*e*omega^2) / sqrt((k - m*omega^2)^2 + (c*omega)^2)
-    % where k = effective stiffness, c = effective damping
-
-    k_static = Kp_pos * K_i - K_s;  % Static stiffness [N/m]
-    c_damping = Kd_pos * K_i;  % Damping coefficient [N·s/m]
-
-    % Unbalance force amplitude
+    % Unbalance force amplitude (synchronous disturbance at rotation frequency)
     F_unbalance = m_total * e * omega^2;
 
-    % Response amplitude (displacement due to unbalance)
-    denominator = sqrt((k_static - m_total*omega^2)^2 + (c_damping*omega)^2);
-    runout = F_unbalance / denominator;
+    % Calculate closed-loop response at synchronous frequency
+    s = 1j * omega;  % Excitation at rotation frequency
 
-    runout_array(i) = runout * 1e6;  % Convert to micrometers
+    % Position controller transfer function (PID with derivative filter)
+    G_cx = params.kpx + params.kix/s + s*params.kdx/(1 + s/params.omega_px);
+
+    % Plant: mass with negative stiffness
+    plant_den = amb_mass*s^2 + K_s;  % K_s < 0 (destabilizing)
+
+    % Dynamic stiffness at this frequency
+    dyn_stiff = plant_den + G_cx * K_i;
+
+    % Runout = Force / Dynamic_Stiffness
+    runout = F_unbalance / abs(dyn_stiff);
+
+    runout_array(idx) = runout * 1e6;  % Convert to micrometers
 end
 
 % Create figure for Part 1f
@@ -643,16 +705,23 @@ plot(SoC_runout, runout_array, 'b-', 'LineWidth', 2.5);
 grid on;
 xlabel('State of Charge [%]', 'FontSize', 12);
 ylabel('Rotor Runout [\mum]', 'FontSize', 12);
-title('Rotor Runout Due to Mass Imbalance vs SoC', 'FontSize', 14);
+title('Rotor Runout Due to Mass Imbalance (ISO G2.5) vs SoC', 'FontSize', 14);
+
+% Add secondary x-axis for RPM
+ax1 = gca;
+ax2 = axes('Position', ax1.Position, 'XAxisLocation', 'top', 'Color', 'none');
+ax2.XLim = [params.min_speed_rpm params.max_speed_rpm]/1000;
+ax2.YTick = [];
+xlabel(ax2, 'Rotational Speed [krpm]', 'FontSize', 12);
 
 % Save figure
 saveas(gcf, 'part1f_rotor_runout.fig');
 saveas(gcf, 'part1f_rotor_runout.png');
 
 fprintf('Part 1f completed. Plots saved.\n');
-fprintf('  Runout at 0%% SoC: %.2f µm\n', runout_array(1));
-fprintf('  Runout at 50%% SoC: %.2f µm\n', interp1(SoC_runout, runout_array, 50));
-fprintf('  Runout at 100%% SoC: %.2f µm\n\n', runout_array(end));
+fprintf('  Runout at 0%% SoC (20k RPM): %.4f µm\n', runout_array(1));
+fprintf('  Runout at 50%% SoC (30k RPM): %.4f µm\n', interp1(SoC_runout, runout_array, 50));
+fprintf('  Runout at 100%% SoC (40k RPM): %.4f µm\n\n', runout_array(end));
 
 %% ========================================================================
 % SUMMARY
@@ -676,16 +745,17 @@ fprintf('1c. Storage Cycle:\n');
 fprintf('    - Cycle efficiency: %.2f%%\n\n', efficiency);
 
 fprintf('1d. AMB Step Response:\n');
-fprintf('    - Controller designed with Kp=%.2f, Kd=%.4f\n', Kp_pos, Kd_pos);
-fprintf('    - System stable at both 0 RPM and max speed\n\n');
+fprintf('    - Using PID controller from Appendix B\n');
+fprintf('    - Kp=%.4e, Ki=%.4e, Kd=%.4e\n', params.kpx, params.kix, params.kdx);
+fprintf('    - System response at zero speed\n\n');
 
 fprintf('1e. Dynamic Stiffness:\n');
 fprintf('    - Frequency response analyzed from 1-1000 Hz\n');
-fprintf('    - Both radial and tilting modes evaluated\n\n');
+fprintf('    - Using specified radial and tilting controllers\n\n');
 
 fprintf('1f. Rotor Runout:\n');
-fprintf('    - ISO G2.5 balance grade assumed\n');
-fprintf('    - Max runout: %.2f µm\n\n', max(runout_array));
+fprintf('    - ISO G2.5 balance grade (from Table 1)\n');
+fprintf('    - Max runout: %.4f µm\n\n', max(runout_array));
 
 fprintf('All figures saved to current folder\n');
 fprintf('==============================================\n');
