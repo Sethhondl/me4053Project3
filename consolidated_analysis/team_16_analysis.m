@@ -961,7 +961,11 @@ for i = 1:n_mag
         max_temp_cycle = 20;
 
         A_surface = 2*pi*r_outer*L_flywheel + 2*pi*r_outer^2;
-        eps_eff = 1 / (1/epsilon_rotor + 1/epsilon_housing - 1);
+        % Correct two-surface enclosure radiation model (consistent with Part 1a)
+        housing_clearance_2a = 0.020;  % 20mm radial clearance
+        housing_inner_dia_2a = d_flywheel + 2*housing_clearance_2a;
+        A_housing_2a = 2*pi*(housing_inner_dia_2a/2)*L_flywheel + 2*pi*(housing_inner_dia_2a/2)^2;
+        rad_factor_2a = 1/epsilon_rotor + (A_surface/A_housing_2a)*(1/epsilon_housing - 1);
 
         for k = 1:length(t_sim)
             P_grid = team_16_cycle(t_sim(k));
@@ -978,7 +982,7 @@ for i = 1:n_mag
             P_stator = statorLosses(t_mag, d_shaft, L_motor, I_pu, omega_rpm_curr);
             P_loss = P_rotor + P_stator;
 
-            T_rotor = (T_housing_K^4 + P_rotor/(eps_eff*sigma*A_surface))^0.25;
+            T_rotor = (T_housing_K^4 + P_rotor*rad_factor_2a/(sigma*A_surface))^0.25;
             T_celsius = T_rotor - 273;
             if T_celsius > max_temp_cycle
                 max_temp_cycle = T_celsius;
@@ -1195,7 +1199,11 @@ power_grid_opt = zeros(size(t_fine));
 power_loss_opt = zeros(size(t_fine));
 temp_opt = zeros(size(t_fine));
 
-eps_eff = 1 / (1/epsilon_rotor + 1/epsilon_housing - 1);
+% Correct two-surface enclosure radiation model (consistent with Part 1a)
+housing_clearance_2b = 0.020;  % 20mm radial clearance
+housing_inner_dia_2b = optimal.flywheel_diameter + 2*housing_clearance_2b;
+A_housing_2b = 2*pi*(housing_inner_dia_2b/2)*optimal.flywheel_length + 2*pi*(housing_inner_dia_2b/2)^2;
+rad_factor_2b = 1/epsilon_rotor + (A_surf_opt/A_housing_2b)*(1/epsilon_housing - 1);
 omega_curr = (omega_max_opt + omega_min_opt) / 2;
 
 fprintf('Running detailed 6-hour cycle simulation...\n');
@@ -1216,7 +1224,7 @@ for k = 1:length(t_fine)
         optimal.motor_length, I_pu, omega_rpm);
     power_loss_opt(k) = P_rotor + P_stator;
 
-    T_rotor = (T_housing_K^4 + P_rotor/(eps_eff*sigma*A_surf_opt))^0.25;
+    T_rotor = (T_housing_K^4 + P_rotor*rad_factor_2b/(sigma*A_surf_opt))^0.25;
     temp_opt(k) = T_rotor - 273;
 
     E_curr = 0.5 * I_total_opt * omega_curr^2;
@@ -1388,12 +1396,14 @@ fprintf('   wp = %.0f rad/s\n\n', new_ctrl.omega_p_alpha);
 %% ========================================================================
 % DELIVERABLE 3b: AMB STEP RESPONSE COMPARISON
 % =========================================================================
-% Compare the step response of baseline and new system AMBs.
+% Compare the step response of baseline and new system AMBs using
+% transfer function analysis (same approach as Part 1d).
 %
-% SIMULATION:
-%   - Time-domain simulation with state variables: x, v, i, xi (integral)
-%   - Step disturbance = 10% of rated force
-%   - Compare position, current, and force responses
+% TRANSFER FUNCTION APPROACH:
+%   - Plant: G_p(s) = K_i / (m*s^2 - K_s)  [note: K_s < 0]
+%   - Position controller: G_pos(s) = kp + ki/s + kd*s/(1+s/wp)
+%   - Closed-loop from disturbance: T_dist = G_dist / (1 + L)
+%   - Current loop assumed fast (G_ci ≈ 1)
 %
 % METRICS:
 %   - Peak displacement
@@ -1404,10 +1414,7 @@ fprintf('================================================================\n');
 fprintf('PART 3b: AMB Step Response Comparison\n');
 fprintf('================================================================\n\n');
 
-% Simulation parameters
-dt_step = 1e-5;
-t_step = 0:dt_step:0.05;
-
+% Step disturbances: 10% of rated force
 F_step_bl = 0.10 * baseline.amb_rated_force;
 F_step_new = 0.10 * new_amb_force;
 
@@ -1415,82 +1422,74 @@ fprintf('Step disturbances:\n');
 fprintf('  Baseline: %.1f N (10%% of %.0f N)\n', F_step_bl, baseline.amb_rated_force);
 fprintf('  New: %.1f N (10%% of %.0f N)\n\n', F_step_new, new_amb_force);
 
-% Storage arrays
-x_step_bl = zeros(size(t_step));
-x_step_new = zeros(size(t_step));
-i_step_bl = zeros(size(t_step));
-i_step_new = zeros(size(t_step));
+% Time vector for simulation
+t_step = linspace(0, 0.05, 5000);  % 50 ms
 
-% BASELINE simulation
-x = 0; v = 0; i = 0; xi = 0; i_filt = 0;
-Kp_c = baseline.Kp_current;
-Ki_c = baseline.Ki_current;
+% === BASELINE Transfer Function Model ===
+s = tf('s');
 
-for k = 1:length(t_step)
-    e_pos = -x;  % Reference = 0
+% Position controller: G_pos(s) = kp + ki/s + kd*s/(1+s/wp)
+G_pos_bl = baseline.kpx + baseline.kix/s + s*baseline.kdx/(1 + s/baseline.omega_px);
 
-    % PID controller
-    i_p = baseline.kpx * e_pos;
-    xi = xi + e_pos * dt_step;
-    i_i = baseline.kix * xi;
-    di_filt = baseline.omega_px * (baseline.kdx * (-v) - i_filt);
-    i_filt = i_filt + di_filt * dt_step;
-    i_d = i_filt;
+% Plant: G_p(s) = K_i / (m*s^2 - K_s)
+% Note: K_s_bl is already negative (destabilizing)
+G_plant_bl = K_i_bl / (baseline.total_mass*s^2 + K_s_bl);
 
-    i_cmd = (i_p + i_i + i_d) / K_i_bl;
+% Open-loop transfer function
+L_bl = G_pos_bl * G_plant_bl;
 
-    % Current controller
-    di = (i_cmd - i) * Kp_c + Ki_c * (i_cmd - i) * dt_step;
-    i = i + di * dt_step;
+% Disturbance transfer function (force to position without controller)
+G_dist_bl = 1 / (baseline.total_mass*s^2 + K_s_bl);
 
-    % AMB force and dynamics
-    F_amb = K_i_bl * i - K_s_bl * x;
-    a = (F_amb + F_step_bl) / baseline.total_mass;
-    v = v + a * dt_step;
-    x = x + v * dt_step;
+% Closed-loop from disturbance to position
+T_dist_bl = G_dist_bl / (1 + L_bl);
 
-    x_step_bl(k) = x;
-    i_step_bl(k) = i;
-end
+% Closed-loop from disturbance to control effort (for current calculation)
+T_ctrl_bl = -L_bl * G_dist_bl / (1 + L_bl);
 
-% NEW SYSTEM simulation
-x = 0; v = 0; i = 0; xi = 0; i_filt = 0;
+% Simulate step response
+[x_step_bl, ~] = step(T_dist_bl * F_step_bl, t_step);
+[f_ctrl_bl, ~] = step(T_ctrl_bl * F_step_bl * K_i_bl, t_step);
+i_step_bl = f_ctrl_bl / K_i_bl;
 
-for k = 1:length(t_step)
-    e_pos = -x;
+% === NEW DESIGN Transfer Function Model ===
+% Position controller for new design
+G_pos_new = new_ctrl.kpx + new_ctrl.kix/s + s*new_ctrl.kdx/(1 + s/new_ctrl.omega_px);
 
-    i_p = new_ctrl.kpx * e_pos;
-    xi = xi + e_pos * dt_step;
-    i_i = new_ctrl.kix * xi;
-    di_filt = new_ctrl.omega_px * (new_ctrl.kdx * (-v) - i_filt);
-    i_filt = i_filt + di_filt * dt_step;
-    i_d = i_filt;
+% Plant for new design
+G_plant_new = K_i_new / (optimal.total_mass*s^2 + K_s_new);
 
-    i_cmd = (i_p + i_i + i_d) / K_i_new;
+% Open-loop
+L_new = G_pos_new * G_plant_new;
 
-    di = (i_cmd - i) * Kp_c + Ki_c * (i_cmd - i) * dt_step;
-    i = i + di * dt_step;
+% Disturbance transfer function
+G_dist_new = 1 / (optimal.total_mass*s^2 + K_s_new);
 
-    F_amb = K_i_new * i - K_s_new * x;
-    a = (F_amb + F_step_new) / optimal.total_mass;
-    v = v + a * dt_step;
-    x = x + v * dt_step;
+% Closed-loop from disturbance to position
+T_dist_new = G_dist_new / (1 + L_new);
 
-    x_step_new(k) = x;
-    i_step_new(k) = i;
-end
+% Closed-loop from disturbance to control effort
+T_ctrl_new = -L_new * G_dist_new / (1 + L_new);
 
-% Calculate metrics
-peak_bl = max(abs(x_step_bl)) * 1e6;
+% Simulate step response
+[x_step_new, ~] = step(T_dist_new * F_step_new, t_step);
+[f_ctrl_new, ~] = step(T_ctrl_new * F_step_new * K_i_new, t_step);
+i_step_new = f_ctrl_new / K_i_new;
+
+% === Calculate Metrics ===
+peak_bl = max(abs(x_step_bl)) * 1e6;  % Convert to um
 peak_new = max(abs(x_step_new)) * 1e6;
 
+% Settling time (2% of peak)
 ss_bl = x_step_bl(end);
-settle_idx_bl = find(abs(x_step_bl - ss_bl) > 0.02*peak_bl*1e-6, 1, 'last');
+threshold_bl = 0.02 * max(abs(x_step_bl));
+settle_idx_bl = find(abs(x_step_bl - ss_bl) > threshold_bl, 1, 'last');
 if isempty(settle_idx_bl), settle_idx_bl = 1; end
-settle_bl = t_step(settle_idx_bl) * 1000;
+settle_bl = t_step(settle_idx_bl) * 1000;  % Convert to ms
 
 ss_new = x_step_new(end);
-settle_idx_new = find(abs(x_step_new - ss_new) > 0.02*peak_new*1e-6, 1, 'last');
+threshold_new = 0.02 * max(abs(x_step_new));
+settle_idx_new = find(abs(x_step_new - ss_new) > threshold_new, 1, 'last');
 if isempty(settle_idx_new), settle_idx_new = 1; end
 settle_new = t_step(settle_idx_new) * 1000;
 
@@ -1529,8 +1528,8 @@ subplot(2,2,4);
 axis off;
 text(0.1, 0.9, 'STEP RESPONSE METRICS', 'FontSize', 14, 'FontWeight', 'bold');
 text(0.1, 0.7, sprintf('Peak Displacement:'), 'FontSize', 12, 'FontWeight', 'bold');
-text(0.1, 0.55, sprintf('  Baseline: %.3f um', peak_bl), 'FontSize', 11);
-text(0.1, 0.4, sprintf('  New: %.3f um', peak_new), 'FontSize', 11);
+text(0.1, 0.55, sprintf('  Baseline: %.4f um', peak_bl), 'FontSize', 11);
+text(0.1, 0.4, sprintf('  New: %.4f um', peak_new), 'FontSize', 11);
 text(0.1, 0.25, sprintf('Settling Time (2%%):'), 'FontSize', 12, 'FontWeight', 'bold');
 text(0.1, 0.1, sprintf('  Baseline: %.2f ms', settle_bl), 'FontSize', 11);
 text(0.1, -0.05, sprintf('  New: %.2f ms', settle_new), 'FontSize', 11);
