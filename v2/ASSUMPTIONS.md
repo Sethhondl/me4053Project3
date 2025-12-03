@@ -99,16 +99,32 @@ Industry rule-of-thumb: AMB rotor mass typically 8-15% of shaft mass for high-sp
 
 ### 2.3 Transverse Moment of Inertia
 
-**Assumption:** Calculated using simplified formula:
+**Assumption:** Calculated using parallel axis theorem for multi-component rotor:
 ```
-I_transverse = (1/12) * m_total * (3*r^2 + L^2)
+I_transverse = Σ (I_cm_i + m_i * d_i^2)
 ```
+Where d_i is each component's distance from the system center of mass.
 
-**Justification:** Standard formula for solid cylinder, reasonable for a flywheel-dominated rotor.
+**Justification:** Proper accounting for COM offsets gives more accurate transverse inertia than simple cylinder formula.
 
 **Impact:** Medium - Affects tilting mode natural frequency and controller design.
 
 **To Remove:** Provide measured or FEA-computed transverse inertia.
+
+---
+
+### 2.4 Center of Mass and AMB Distances (4-DOF Geometry)
+
+**Assumption:** COM position and distances to each AMB are calculated from component geometry:
+- z_com = (Σ m_i × z_i) / m_total
+- d_amb_top = z_amb_top - z_com
+- d_amb_bottom = z_com - z_amb_bottom
+
+**Justification:** Proper 4-DOF model requires actual lever arm distances for tilting dynamics, not symmetric approximation (L_amb/2).
+
+**Impact:** Medium - Affects tilting stiffness calculations and runout analysis.
+
+**To Remove:** Provide CAD-based COM analysis.
 
 ---
 
@@ -274,7 +290,23 @@ Limited to I_max = 1.0 pu.
 
 ---
 
-### 5.3 Decoupled Axes
+### 5.3 Two-AMB Stiffness Factor
+
+**Assumption:** Dynamic stiffness uses 2×K_s to account for both AMBs:
+```
+K_radial_total = 2 × K_s (two bearings in parallel)
+K_tilt = (d_top² + d_bot²) × K_s (lever arm effects)
+```
+
+**Justification:** Both AMBs contribute to the total radial stiffness of the system. For tilting, each AMB's contribution is weighted by the square of its distance from COM.
+
+**Impact:** High - Significantly affects dynamic stiffness magnitude at low frequencies.
+
+**To Remove:** N/A - This is correct AMB physics.
+
+---
+
+### 5.4 Decoupled Axes
 
 **Assumption:** Radial x-y axes and tilting modes are analyzed independently (no gyroscopic coupling).
 
@@ -289,7 +321,7 @@ Limited to I_max = 1.0 pu.
 
 ---
 
-### 5.4 AMB Force Linearity
+### 5.5 AMB Force Linearity
 
 **Assumption:** AMB force is linear with current: F = K_i * i
 
@@ -340,17 +372,36 @@ Limited to I_max = 1.0 pu.
 
 ---
 
-### 6.3 New Controller Design (HW3 Methodology)
+### 6.3 New Controller Design (Loop-Shaping Methodology)
 
-**Assumption:** New system controllers designed using:
-1. **Current controller:** Pole-zero cancellation for 1.5 kHz bandwidth
-2. **Position controller:** 100 Hz crossover frequency target
-3. **Derivative filter:** 10x crossover frequency
+**Assumption:** New system controllers designed using frequency-domain loop-shaping:
 
-**Justification:** Based on Homework 3 methodology:
-- Pole-zero cancellation ensures first-order current response
-- Crossover frequency > 2x unstable pole frequency for stability
-- Derivative filter prevents high-frequency noise amplification
+**Controller structure:**
+```
+G_c(s) = K_o × (1 + s/w_z1) × (1 + s/w_z2) / [s × (1 + s/w_p)]
+```
+Equivalent to PID: `G_c(s) = k_p + k_i/s + k_d×s/(1+s/w_p)`
+
+**Design rules:**
+1. **Crossover frequency:** f_c ≥ 5× unstable pole frequency (minimum 100 Hz)
+2. **Target phase margin:** 60 degrees
+3. **Zero placement:**
+   - w_z1 = w_c / 100 (far below crossover for robustness)
+   - w_z2 = solved to achieve target phase margin
+4. **Derivative filter:** w_p = 4 × w_c (above crossover)
+5. **Gain K_o:** Set for unity loop gain at crossover
+
+**PID conversion:**
+- k_i = K_o
+- k_p = K_o × (1/w_z1 + 1/w_z2)
+- k_d = K_o / (w_z1 × w_z2)
+
+**Tilting controller:** Scaled from baseline maintaining stiffness margin (k_p/|K_s|).
+
+**Justification:**
+- Loop-shaping provides explicit phase margin control
+- Crossover >> unstable pole ensures robust stability
+- Stiffness margin scaling maintains relative performance
 
 **Impact:** High - Determines new system stability and performance.
 
@@ -417,18 +468,22 @@ e = G / ω = (2.5 × 10⁻³) / ω [m]
 ### 8.1 State of Charge Definition
 
 **Assumption:**
-- 0% SoC = 50% of max speed (20,000 RPM)
-- 100% SoC = 100% of max speed (40,000 RPM)
-- Linear relationship: ω = ω_min + (ω_max - ω_min) × SoC/100
+- 0% SoC = 50% of max speed (20,000 RPM) = 25% of max kinetic energy
+- 100% SoC = 100% of max speed (40,000 RPM) = 100% of max kinetic energy
+- Energy-based relationship (SoC ∝ stored energy ∝ ω²):
+  - Forward: ω = √(ω_min² + (ω_max² - ω_min²) × SoC/100)
+  - Reverse: SoC = 100 × (ω² - ω_min²) / (ω_max² - ω_min²)
 
-**Justification:** From project specification. Energy scales as ω²:
-- At 0% SoC: E = 0.25 × E_max
-- At 100% SoC: E = E_max
-- Usable energy = 0.75 × E_max
+**Justification:** SoC represents "State of Charge" = fraction of usable stored energy.
+Since E = ½Iω², the energy is quadratic with speed:
+- At 0% SoC (ω_min): E_min = 0.25 × E_max
+- At 100% SoC (ω_max): E_max
+- Usable energy = E_max - E_min = 0.75 × E_max
+- At 50% SoC: ω ≈ 34,641 RPM (not 30,000 RPM)
 
-**Impact:** High - Defines usable energy capacity.
+**Impact:** High - Defines usable energy capacity and speed-SoC mapping.
 
-**To Remove:** N/A - This is the specification.
+**To Remove:** N/A - This is the correct physics-based definition.
 
 ---
 
@@ -514,4 +569,12 @@ Where E_recovery = energy needed to restore initial SoC.
 
 ---
 
-*Last updated: December 1, 2025*
+*Last updated: December 3, 2025*
+
+---
+
+## Changes from v1
+
+1. **4-DOF Geometry:** Added proper COM calculation and individual AMB distances (Section 2.4)
+2. **2×Ks Stiffness:** Added two-AMB stiffness factor for dynamic stiffness (Section 5.3)
+3. **Loop-Shaping Controller:** Replaced HW3 methodology with frequency-domain loop-shaping (Section 6.3)
