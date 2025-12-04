@@ -117,9 +117,17 @@ omega_palpha = 6283 rad/s
 
 ## State of Charge Definition
 
-- **0% SoC** = 50% of max speed = 20,000 RPM
-- **100% SoC** = 100% of max speed = 40,000 RPM
-- Linear relationship: `omega = omega_min + (omega_max - omega_min) * SoC/100`
+- **0% SoC** = 50% of max speed = 20,000 RPM (contains 25% of max kinetic energy)
+- **100% SoC** = 100% of max speed = 40,000 RPM (contains 100% of max kinetic energy)
+- **Energy-based relationship** (since E = ½Iω², SoC is proportional to ω²):
+  ```matlab
+  % SoC to speed (forward)
+  omega = sqrt(omega_min^2 + (omega_max^2 - omega_min^2) * SoC/100);
+
+  % Speed to SoC (reverse)
+  SoC = 100 * (omega^2 - omega_min^2) / (omega_max^2 - omega_min^2);
+  ```
+- At 50% SoC: ω = √(ω_min² + 0.5×(ω_max² - ω_min²)) ≈ 34,641 RPM (not 30,000 RPM)
 
 ---
 
@@ -233,3 +241,23 @@ power = torque * omega;
 % Use maximum available current (1.0 pu)
 I_rated_pu = 1.0;
 ```
+
+---
+
+## Reference Repositories
+
+### Klei's Implementation (Team 2)
+**GitHub:** https://github.com/klei1004/Project3Flywheel
+
+Cloned locally to `klei_repo/` for reference. Key differences from our implementation:
+- Uses `team_2_cycle` instead of `team_16_cycle`
+- Full 4-DOF ODE simulation for AMB dynamics
+- Loop-shaping controller design methodology
+- Modular function-based code structure
+
+Key files:
+- `klei_repo/MagLevFlywheelModel.m` - Main analysis script
+- `klei_repo/FlywheelDynamicsModeling.m` - Additional dynamics analysis
+- `klei_repo/analyze_team2_cycle.m` - Team 2 cycle analysis
+
+See `COMPARISON_v2_vs_klei.md` for detailed comparison with our v2 implementation.

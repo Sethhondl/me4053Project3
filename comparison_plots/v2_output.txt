@@ -1,0 +1,155 @@
+================================================================
+   FLYWHEEL ENERGY STORAGE SYSTEM ANALYSIS - VERSION 2
+================================================================
+Date: 03-Dec-2025 12:48:49
+Using Control System Toolbox for transfer function analysis
+
+Loading baseline system parameters...
+
+Calculating rotating group mass and inertia...
+  Flywheel mass: 223.49 kg
+  Shaft mass: 69.61 kg
+  Total rotating mass: 293.10 kg
+  Spin-axis inertia: 5.4238 kg*m^2
+  Transverse inertia: 36.8927 kg*m^2
+  COM position (from bottom): 0.888 m
+  Distance COM to top AMB: 0.650 m
+  Distance COM to bottom AMB: 0.825 m
+
+Loading AMB parameters...
+  Position stiffness (K_s): -1.348e+07 N/m (negative/destabilizing)
+  Force constant (K_i): 819.10 N/A
+  Coil inductance: 0.0275 H
+  Coil resistance: 0.171 Ohms
+
+  Unstable pole frequency: 34.13 Hz
+
+Calculating rated power...
+  Rated current: 1.00 pu
+  Magnetic shear: 26785.71 Pa
+  Rotor diameter (with magnets): 0.096 m
+  Rated torque: 96.94 Nm
+  Rated power (at omega_min): 203.03 kW
+
+
+================================================================
+              DELIVERABLE 1: BASELINE ANALYSIS
+================================================================
+
+================================================================
+PART 1a: Losses and Temperature vs SoC
+================================================================
+
+Radiating surface areas:
+  Flywheel cylinder:  1.3509 m^2
+  Flywheel ends:      0.2794 m^2 (annular)
+  Motor cylinder:     0.0754 m^2
+  Shaft cylinder:     0.0924 m^2
+  Shaft ends:         0.0111 m^2
+  TOTAL:              1.8091 m^2
+
+Radiation factor (F_rad): 2.57
+Calculating losses at rated power across SoC range...
+  Using rotor diameter: 0.096 m (shaft + 2*magnets)
+Plot saved: part1a_losses_temperature.png
+
+Results Summary:
+  Max rotor losses: 0.42 kW
+  Max stator losses: 3.58 kW
+  Max total losses: 3.71 kW at 0% SoC
+  Max temperature: 97.4 C (limit: 100 C)
+
+================================================================
+PART 1b: Specific Power and Specific Energy
+================================================================
+
+Energy Storage:
+  Energy at 100% SoC: 13.22 kWh
+  Energy at 0% SoC: 3.30 kWh
+  Usable energy: 9.91 kWh
+
+Specific Performance:
+  Specific Power: 0.693 kW/kg
+  Specific Energy: 33.82 Wh/kg
+
+================================================================
+PART 1c: Storage Cycle Efficiency (15-minute baseline)
+================================================================
+
+Simulating 15-minute baseline storage cycle...
+Plot saved: part1c_storage_cycle.png
+
+Cycle Results:
+  Energy discharged: 9.16 kWh
+  Energy charged: 9.12 kWh
+  Total losses: 0.47 kWh
+  Final SoC: 45.3% (started at 50%)
+  Cycle Efficiency: 95.47%
+
+================================================================
+PART 1d: AMB Step Response Analysis
+================================================================
+
+Building 2-DOF model (radial + tilting) for both bearings...
+
+System Parameters:
+  Rotor mass (m): 293.10 kg
+  Transverse inertia (I_t): 36.8927 kg*m^2
+  AMB separation (L_amb): 1.300 m
+  Distance to bearing (a = L/2): 0.650 m
+  Position stiffness (Ks): -1.348e+07 N/m (negative)
+  Force constant (Ki): 819.10 N/A
+
+Position Controller G_cx(s):
+  Kp = 1.2639e+08, Ki = 1.1687e+09, Kd = 252790, wp = 3770 rad/s
+
+Tilting Controller G_alpha(s):
+  Kp = 7.6992e+07, Ki = 1.1895e+09, Kd = 80294, wp = 6283 rad/s
+
+Building separate radial and tilting mode transfer functions...
+  Radial mode plant: G = Ki / (m*s^2 + Ks)
+  Tilting stiffness (2*a^2*Ks): -1.139e+07 N*m/rad
+  Tilting mode plant: G = 1 / (I_t*s^2 + K_tilt_eff)
+
+Step disturbance at TOP bearing: 578.0 N (10% of 5780 N)
+
+Checking closed-loop stability...
+  Radial phase margin: 3.5 deg at 8730.9 Hz
+  Tilting phase margin: 49.9 deg at 7.9 Hz
+
+Simulating step response using state-space formulation...
+  Simulating radial mode (x_cm)...
+[Warning: The input signal is undersampled. Use a sampling period smaller than
+1.5e-05.] 
+[> In DynamicSystem.checkLsimInputs (line 123)
+In DynamicSystem/lsim (line 72)
+In flywheel_analysis_v2 (line 706)] 
+  Simulating tilting mode (alpha)...
+    Tilting simulation OK
+    Peak x_cm: 0.0052 um
+    Peak alpha: 5.477e-06 rad
+    Peak a*alpha (tilt contribution): 3.5601 um
+  Combining radial and tilting modes...
+    Note: Top bearing sees LARGER displacement (effects add)
+          Bottom bearing sees SMALLER displacement (effects subtract)
+    Peak ratio (top/bot): 1.00
+  Simulation time: 150.0 ms
+  Peak force ratio (top/bot): 1.52
+
+Plot saved: part1d_amb_step_response.png
+
+Step Response Metrics:
+                          Top Bearing    Bottom Bearing
+  Peak displacement:      3.5648 um       3.5554 um
+  Final displacement:     0.2426 um       0.2397 um
+  Peak current:           0.785 A         0.517 A
+  Settling time (2%):     136.05 ms        136.02 ms
+
+  Note: Bottom bearing deflection is due to tilting motion caused
+        by the step force at the top bearing.
+
+================================================================
+PART 1e: Dynamic Stiffness Analysis
+================================================================
+
+Computing dynamic stiffness from 1-1000 Hz...

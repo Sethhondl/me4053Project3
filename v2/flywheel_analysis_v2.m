@@ -1341,92 +1341,177 @@ fprintf('    Specific energy: %.2f Wh/kg\n', optimal.specific_energy);
 fprintf('    Cycle efficiency: %.2f%%\n', optimal.cycle_efficiency);
 fprintf('    Max temperature: %.1f C\n\n', optimal.max_temp);
 
-% --- PLOT: Part 2a ---
-figure('Name', 'Part 2a: Design Tradeoffs', 'Position', [100 100 1400 900]);
+% --- PLOT: Part 2a (Improved Design Justification) ---
+figure('Name', 'Part 2a: Design Tradeoffs', 'Position', [50 50 1600 1000]);
 
 % Create meshgrid for plotting
 [MAG, SPD] = meshgrid(magnet_thickness_range*1000, max_speed_range/1000);
 
-% Mask non-viable designs for better visualization
-sp_plot = results.specific_power;
-sp_plot(results.viable == 0) = NaN;
-se_plot = results.specific_energy;
-se_plot(results.viable == 0) = NaN;
-eff_plot = results.cycle_efficiency;
-eff_plot(results.viable == 0) = NaN;
+% Compute composite score for all designs (not just viable)
+score_grid = zeros(n_mag, n_speed);
+for ii = 1:n_mag
+    for jj = 1:n_speed
+        if results.viable(ii,jj) == 1
+            % Normalize metrics relative to viable range
+            sp_n = (results.specific_power(ii,jj) - min(viable_sp)) / (max(viable_sp) - min(viable_sp) + eps);
+            se_n = (results.specific_energy(ii,jj) - min(viable_se)) / (max(viable_se) - min(viable_se) + eps);
+            eff_n = (results.cycle_efficiency(ii,jj) - min(viable_eff)) / (max(viable_eff) - min(viable_eff) + eps);
+            mass_n = (max(viable_mass) - results.total_mass(ii,jj)) / (max(viable_mass) - min(viable_mass) + eps);
+            score_grid(ii,jj) = w_sp*sp_n + w_se*se_n + w_eff*eff_n + w_mass*mass_n;
+        else
+            score_grid(ii,jj) = NaN;
+        end
+    end
+end
 
+% === SUBPLOT 1: Constraint Map (Why designs fail) ===
 subplot(2,3,1);
-contourf(MAG', SPD', sp_plot, 10);
-colorbar;
-hold on;
-plot(optimal.magnet_thickness*1000, optimal.max_speed_rpm/1000, 'rp', ...
-    'MarkerSize', 15, 'MarkerFaceColor', 'r');
-xlabel('Magnet Thickness [mm]', 'FontSize', 10);
-ylabel('Max Speed [krpm]', 'FontSize', 10);
-title('Specific Power [kW/kg]', 'FontSize', 11);
-
-subplot(2,3,2);
-contourf(MAG', SPD', se_plot, 10);
-colorbar;
-hold on;
-plot(optimal.magnet_thickness*1000, optimal.max_speed_rpm/1000, 'rp', ...
-    'MarkerSize', 15, 'MarkerFaceColor', 'r');
-xlabel('Magnet Thickness [mm]', 'FontSize', 10);
-ylabel('Max Speed [krpm]', 'FontSize', 10);
-title('Specific Energy [Wh/kg]', 'FontSize', 11);
-
-subplot(2,3,3);
-contourf(MAG', SPD', eff_plot, 10);
-colorbar;
-hold on;
-plot(optimal.magnet_thickness*1000, optimal.max_speed_rpm/1000, 'rp', ...
-    'MarkerSize', 15, 'MarkerFaceColor', 'r');
-xlabel('Magnet Thickness [mm]', 'FontSize', 10);
-ylabel('Max Speed [krpm]', 'FontSize', 10);
-title('Cycle Efficiency [%]', 'FontSize', 11);
-
-subplot(2,3,4);
-contourf(MAG', SPD', results.max_temp, 10);
-colorbar;
-hold on;
-contour(MAG', SPD', results.max_temp, [100 100], 'r-', 'LineWidth', 2);
-plot(optimal.magnet_thickness*1000, optimal.max_speed_rpm/1000, 'rp', ...
-    'MarkerSize', 15, 'MarkerFaceColor', 'r');
-xlabel('Magnet Thickness [mm]', 'FontSize', 10);
-ylabel('Max Speed [krpm]', 'FontSize', 10);
-title('Max Temperature [C] (red = 100C limit)', 'FontSize', 11);
-
-subplot(2,3,5);
-% Show viable region
-viable_plot = results.viable + results.thermal_feasible + results.cycle_feasible;
-imagesc(magnet_thickness_range*1000, max_speed_range/1000, viable_plot');
-colorbar;
+% Create categorical constraint map: 0=geometry, 1=thermal, 2=cycle, 3=viable
+constraint_map = zeros(n_mag, n_speed);
+for ii = 1:n_mag
+    for jj = 1:n_speed
+        if results.viable(ii,jj) == 1
+            constraint_map(ii,jj) = 3;  % Viable
+        elseif results.thermal_feasible(ii,jj) == 0
+            constraint_map(ii,jj) = 1;  % Thermal failure
+        elseif results.cycle_feasible(ii,jj) == 0
+            constraint_map(ii,jj) = 2;  % Cycle failure
+        else
+            constraint_map(ii,jj) = 0;  % Geometry failure
+        end
+    end
+end
+imagesc(magnet_thickness_range*1000, max_speed_range/1000, constraint_map');
+colormap(gca, [0.7 0.7 0.7; 1 0.4 0.4; 1 0.8 0.4; 0.4 0.8 0.4]);  % Gray, Red, Orange, Green
+caxis([0 3]);
+cb = colorbar('Ticks', [0.375, 1.125, 1.875, 2.625], ...
+    'TickLabels', {'Geometry', 'Thermal', 'Cycle', 'VIABLE'});
 set(gca, 'YDir', 'normal');
 hold on;
-plot(optimal.magnet_thickness*1000, optimal.max_speed_rpm/1000, 'rp', ...
-    'MarkerSize', 15, 'MarkerFaceColor', 'r');
-xlabel('Magnet Thickness [mm]', 'FontSize', 10);
-ylabel('Max Speed [krpm]', 'FontSize', 10);
-title('Feasibility (3=viable, 2=thermal OK, 1=cycle OK)', 'FontSize', 11);
+plot(optimal.magnet_thickness*1000, optimal.max_speed_rpm/1000, 'kp', ...
+    'MarkerSize', 18, 'MarkerFaceColor', 'w', 'LineWidth', 2);
+xlabel('Magnet Thickness [mm]', 'FontSize', 11);
+ylabel('Max Speed [krpm]', 'FontSize', 11);
+title('Design Space Constraints', 'FontSize', 12, 'FontWeight', 'bold');
 
-subplot(2,3,6);
-% Pareto front visualization
-scatter(viable_se, viable_eff, 50, scores, 'filled');
-colorbar;
+% === SUBPLOT 2: Multi-Objective Score ===
+subplot(2,3,2);
+contourf(MAG', SPD', score_grid, 15);
+colormap(gca, 'parula');
+cb = colorbar;
+ylabel(cb, 'Composite Score', 'FontSize', 10);
+hold on;
+% Mark all viable designs
+[viable_i, viable_j] = find(results.viable == 1);
+for k = 1:length(viable_i)
+    plot(magnet_thickness_range(viable_i(k))*1000, max_speed_range(viable_j(k))/1000, ...
+        'wo', 'MarkerSize', 6, 'LineWidth', 1);
+end
+% Mark optimal
+plot(optimal.magnet_thickness*1000, optimal.max_speed_rpm/1000, 'rp', ...
+    'MarkerSize', 18, 'MarkerFaceColor', 'r', 'LineWidth', 2);
+xlabel('Magnet Thickness [mm]', 'FontSize', 11);
+ylabel('Max Speed [krpm]', 'FontSize', 11);
+title(sprintf('Multi-Objective Score (Optimal=%.3f)', best_score), 'FontSize', 12, 'FontWeight', 'bold');
+
+% === SUBPLOT 3: Temperature with Constraint ===
+subplot(2,3,3);
+contourf(MAG', SPD', results.max_temp, 15);
+colormap(gca, 'hot');
+cb = colorbar;
+ylabel(cb, 'Temperature [°C]', 'FontSize', 10);
+hold on;
+contour(MAG', SPD', results.max_temp, [100 100], 'b-', 'LineWidth', 3);
+plot(optimal.magnet_thickness*1000, optimal.max_speed_rpm/1000, 'cp', ...
+    'MarkerSize', 18, 'MarkerFaceColor', 'c', 'LineWidth', 2);
+xlabel('Magnet Thickness [mm]', 'FontSize', 11);
+ylabel('Max Speed [krpm]', 'FontSize', 11);
+title(sprintf('Max Temperature (Optimal=%.1f°C, Limit=100°C)', optimal.max_temp), ...
+    'FontSize', 12, 'FontWeight', 'bold');
+text(3, 48, '100°C Limit', 'Color', 'b', 'FontSize', 11, 'FontWeight', 'bold');
+
+% === SUBPLOT 4: Trade-off - Efficiency vs Specific Energy ===
+subplot(2,3,4);
+scatter(viable_se, viable_eff, 80, scores, 'filled', 'MarkerEdgeColor', 'k');
+colormap(gca, 'parula');
+cb = colorbar;
+ylabel(cb, 'Score', 'FontSize', 10);
 hold on;
 % Highlight Pareto-optimal designs
 pareto_se = viable_se(is_pareto);
 pareto_eff = viable_eff(is_pareto);
-plot(pareto_se, pareto_eff, 'ko', 'MarkerSize', 10, 'LineWidth', 2);
-% Highlight selected optimal
+plot(pareto_se, pareto_eff, 'ko', 'MarkerSize', 14, 'LineWidth', 2.5);
+% Highlight selected optimal with annotation
 plot(optimal.specific_energy, optimal.cycle_efficiency, 'rp', ...
-    'MarkerSize', 15, 'MarkerFaceColor', 'r');
-xlabel('Specific Energy [Wh/kg]', 'FontSize', 10);
-ylabel('Cycle Efficiency [%]', 'FontSize', 10);
-title('Pareto Front (color=score, o=Pareto, ★=optimal)', 'FontSize', 11);
-legend({'All viable', 'Pareto-optimal', 'Selected'}, 'Location', 'southeast');
+    'MarkerSize', 20, 'MarkerFaceColor', 'r', 'LineWidth', 2);
+xlabel('Specific Energy [Wh/kg]', 'FontSize', 11);
+ylabel('Cycle Efficiency [%]', 'FontSize', 11);
+title('Pareto Front: Efficiency vs Energy', 'FontSize', 12, 'FontWeight', 'bold');
+legend({'Viable', 'Pareto-optimal', 'SELECTED'}, 'Location', 'southwest', 'FontSize', 9);
+grid on;
 
-sgtitle('Part 2a: Design Space Exploration with Cycle Feasibility', 'FontSize', 12);
+% === SUBPLOT 5: Trade-off - Mass vs Efficiency ===
+subplot(2,3,5);
+scatter(viable_mass, viable_eff, 80, viable_se, 'filled', 'MarkerEdgeColor', 'k');
+colormap(gca, 'parula');
+cb = colorbar;
+ylabel(cb, 'Sp. Energy [Wh/kg]', 'FontSize', 10);
+hold on;
+plot(optimal.total_mass, optimal.cycle_efficiency, 'rp', ...
+    'MarkerSize', 20, 'MarkerFaceColor', 'r', 'LineWidth', 2);
+xlabel('Total Mass [kg]', 'FontSize', 11);
+ylabel('Cycle Efficiency [%]', 'FontSize', 11);
+title('Trade-off: Mass vs Efficiency', 'FontSize', 12, 'FontWeight', 'bold');
+grid on;
+% Add baseline reference
+plot(baseline.total_mass, 95.47, 'bs', 'MarkerSize', 15, 'MarkerFaceColor', 'b', 'LineWidth', 2);
+legend({'Viable Designs', 'SELECTED', 'Baseline'}, 'Location', 'southwest', 'FontSize', 9);
+
+% === SUBPLOT 6: Optimal Design Summary ===
+subplot(2,3,6);
+axis off;
+
+% Create a summary box
+text(0.5, 0.95, 'OPTIMAL DESIGN SELECTED', 'FontSize', 14, 'FontWeight', 'bold', ...
+    'HorizontalAlignment', 'center', 'Color', [0.8 0 0]);
+
+% Design parameters
+text(0.05, 0.82, 'GEOMETRY:', 'FontSize', 11, 'FontWeight', 'bold');
+text(0.08, 0.74, sprintf('Flywheel: %.0f mm dia × %.0f mm length', ...
+    optimal.flywheel_diameter*1000, optimal.flywheel_length*1000), 'FontSize', 10);
+text(0.08, 0.66, sprintf('Magnet Thickness: %.1f mm', optimal.magnet_thickness*1000), 'FontSize', 10);
+text(0.08, 0.58, sprintf('Max Speed: %.0f RPM', optimal.max_speed_rpm), 'FontSize', 10);
+
+% Performance metrics
+text(0.05, 0.46, 'PERFORMANCE:', 'FontSize', 11, 'FontWeight', 'bold');
+text(0.08, 0.38, sprintf('Specific Energy: %.2f Wh/kg', optimal.specific_energy), 'FontSize', 10);
+text(0.08, 0.30, sprintf('Specific Power: %.3f kW/kg', optimal.specific_power), 'FontSize', 10);
+text(0.08, 0.22, sprintf('Cycle Efficiency: %.2f%%', optimal.cycle_efficiency), 'FontSize', 10);
+text(0.08, 0.14, sprintf('Total Mass: %.0f kg', optimal.total_mass), 'FontSize', 10);
+
+% Why selected
+text(0.05, 0.02, 'WHY SELECTED:', 'FontSize', 11, 'FontWeight', 'bold');
+text(0.08, -0.06, sprintf('• Multi-objective score: %.3f (highest)', best_score), 'FontSize', 10);
+text(0.08, -0.14, sprintf('• Thermal margin: %.1f°C below limit', 100 - optimal.max_temp), 'FontSize', 10);
+text(0.08, -0.22, sprintf('• Pareto-optimal (non-dominated)', best_score), 'FontSize', 10);
+
+% Weights used
+text(0.55, 0.82, 'OBJECTIVE WEIGHTS:', 'FontSize', 11, 'FontWeight', 'bold');
+text(0.58, 0.74, sprintf('Specific Energy: %.0f%%', w_se*100), 'FontSize', 10);
+text(0.58, 0.66, sprintf('Cycle Efficiency: %.0f%%', w_eff*100), 'FontSize', 10);
+text(0.58, 0.58, sprintf('Specific Power: %.0f%%', w_sp*100), 'FontSize', 10);
+text(0.58, 0.50, sprintf('Mass (lower): %.0f%%', w_mass*100), 'FontSize', 10);
+
+% Comparison to baseline
+text(0.55, 0.38, 'vs BASELINE:', 'FontSize', 11, 'FontWeight', 'bold');
+mass_change = (optimal.total_mass - baseline.total_mass) / baseline.total_mass * 100;
+eff_change = optimal.cycle_efficiency - 95.47;
+energy_change = (optimal.usable_energy/3.6e6 - 9.91) / 9.91 * 100;
+text(0.58, 0.30, sprintf('Mass: %+.0f%%', mass_change), 'FontSize', 10);
+text(0.58, 0.22, sprintf('Efficiency: %+.1f%%', eff_change), 'FontSize', 10);
+text(0.58, 0.14, sprintf('Energy: %+.0f%%', energy_change), 'FontSize', 10);
+
+sgtitle('Part 2a: Design Space Exploration & Optimal Selection', 'FontSize', 14, 'FontWeight', 'bold');
 saveas(gcf, 'part2a_design_tradeoffs.png');
 fprintf('Plot saved: part2a_design_tradeoffs.png\n\n');
 

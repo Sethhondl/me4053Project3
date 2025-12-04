@@ -1,0 +1,160 @@
+Plot saved: klei_part1a_losses_temperature.png
+Deliverable 1 rotating group metrics:
+  Total rotating mass: 293.10 kg
+  Specific power:      0.528 kW/kg
+  Specific energy:     33.465 Wh/kg
+
+Deliverable 1 storage cycle efficiency (including self-discharge):
+  Energy delivered to grid:      9.2 kWh
+  Energy drawn from grid:        9.1 kWh
+  Self-discharge energy loss:    0.6 kWh
+  Round-trip efficiency:         94.0 %
+
+Plot saved: klei_part1c_storage_cycle.png
+Plot saved: klei_part1d_amb_step_response.png
+Plot saved: klei_part1e_dynamic_stiffness.png
+Plot saved: klei_part1f_rotor_runout.png
+
+=== Deliverable 2: Flywheel Design Study ===
+
+=== Step 1: Cycle Requirements Analysis ===
+
+Team 2 Cycle Requirements (before safety factors):
+  Required energy capacity:     33.91 kWh
+  Energy swing:                 26.51 kWh
+  Peak discharge power:         360.43 kW
+  Peak charge power:            443.44 kW
+  Required rated power:         443.44 kW
+
+=== Step 2: Safety Factor Application ===
+
+Safety factors applied:
+  Energy capacity: 1.2 (20% margin)
+  Rated power:     1.1 (10% margin)
+
+Design Requirements (after safety factors):
+  Design energy capacity:       40.70 kWh
+  Design rated power:            487.78 kW
+
+=== Step 3: Design Variable Iteration ===
+
+Evaluating 500 design points...
+Progress: .......... Done.
+
+Plot saved: klei_part2a_design_tradeoffs.png
+
+=== Optimal Design Selection ===
+
+Optimal Design Parameters:
+  Magnet thickness:        3.37 mm
+  Maximum speed:           33125 rpm (3468.8 rad/s)
+  Rated power:             487.8 kW
+  Rotating mass:           1227.26 kg
+
+Geometry:
+  Flywheel diameter:       518.9 mm
+  Flywheel height:         2854.9 mm
+  Shaft diameter:          100.9 mm
+  Motor length:            949.7 mm
+  Total shaft length:      4744.0 mm
+
+Requirements Compliance:
+  Design energy capacity:  40.70 kWh
+  Actual energy capacity:  41.17 kWh (101.2% of requirement)
+  Design rated power:       487.78 kW
+  Actual rated power:       487.78 kW (100.0% of requirement)
+
+Performance Metrics:
+  Specific power:          0.397 kW/kg
+  Specific energy:         33.547 Wh/kg
+  Cycle efficiency:         97.2 %
+  Average losses:           1.9 kW
+
+Justification:
+  This design was selected based on a weighted combination of
+  objectives: maximizing specific power, specific energy, and
+  cycle efficiency while minimizing average losses. The design
+  satisfies all constraints: temperature stays below maximum
+  at all SoC points, and the storage cycle can be completed
+  starting at 50% SoC without dropping below 0% SoC.
+  The design meets or exceeds the required energy capacity
+  (40.70 kWh) and rated power (487.78 kW) determined from the
+  team_16_cycle analysis with applied safety factors.
+
+
+=== Highest Efficiency Design Cycle Plot ===
+Design with highest efficiency: 97.19%
+  Magnet thickness: 2.68 mm
+  Maximum speed: 26875 rpm
+
+Plot saved: klei_part2b_optimal_cycle.png
+
+=== Step 4: AMB Controller Design for Optimal System ===
+
+Optimal design parameters created.
+  Flywheel diameter: 518.9 mm
+  Flywheel height: 2854.9 mm
+  Shaft diameter: 100.9 mm
+  Rotating mass: 1227.26 kg
+  AMB rated force: 24078.8 N
+
+Designing controllers using frequency-domain loop-shaping...
+
+--- Position Controller Design ---
+  Scaling factors (optimal/baseline):
+    |Ks| ratio: 4.166
+    Ki ratio: 4.166
+    Mass ratio: 4.193
+  Baseline stiffness margin (k_p/|Ks|): 9.37
+  Designed position controller:
+    k_p = 5.2653e+08 N/m
+    k_i = 4.8686e+09 N/(m·s)
+    k_d = 1.0531e+06 N·s/m
+    ω_p = 3770.0 rad/s
+
+--- Tilting Controller Design ---
+  Tilting scaling factors:
+    |K_s_tilt| ratio: 36.467
+    J_t ratio: 34.295
+  Baseline tilt stiffness margin: 5.18
+  Designed tilting controller:
+    k_p = 2.8077e+09 N·m/rad
+    k_i = 4.3379e+10 N·m/(rad·s)
+    k_d = 2.9281e+06 N·m·s/rad
+    ω_p = 6283.0 rad/s
+
+Controller design complete.
+
+Controller Transfer Functions:
+
+Position Controller (Radial X):
+  PID Form: G_cx(s) = k_p + k_i/s + k_d*s/(1 + s/ω_p)
+    k_p = 5.2653e+08 N/m
+    k_i = 4.8686e+09 N/(m·s)
+    k_d = 1.0531e+06 N·s/m
+    ω_p = 3770.0 rad/s (600.0 Hz)
+  Loop-Shaping Form: G_cx(s) = K_o*(1 + s/ω_z1)*(1 + s/ω_z2) / [s*(1 + s/ω_p)]
+    K_o = 4.8686e+09
+    ω_z1 = 67.99 rad/s (10.82 Hz)
+    ω_z2 = 67.99 rad/s (10.82 Hz)
+    ω_p = 3770.0 rad/s (600.0 Hz)
+
+Tilting Controller (Alpha/Beta):
+  PID Form: G_tilt(s) = k_p + k_i/s + k_d*s/(1 + s/ω_p)
+    k_p = 2.8077e+09 N·m/rad
+    k_i = 4.3379e+10 N·m/(rad·s)
+    k_d = 2.9281e+06 N·m·s/rad
+    ω_p = 6283.0 rad/s (1000.0 Hz)
+  Loop-Shaping Form: G_tilt(s) = K_o*(1 + s/ω_z1)*(1 + s/ω_z2) / [s*(1 + s/ω_p)]
+    K_o = 4.3379e+10
+    ω_z1 = 121.72 rad/s (19.37 Hz)
+    ω_z2 = 121.72 rad/s (19.37 Hz)
+    ω_p = 6283.0 rad/s (1000.0 Hz)
+
+Current Controller:
+  G_ci(s) = k_p + k_i/s
+    k_p = 345.0 V/A
+    k_i = 2149.0 V/(A·s)
+
+Comparing AMB Performance: Baseline vs Optimal Design
+
